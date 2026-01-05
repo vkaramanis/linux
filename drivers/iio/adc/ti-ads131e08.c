@@ -520,9 +520,9 @@ static int ads131e08_pool_data(struct ads131e08_state *st)
 	if (ret)
 		return ret;
 
-	ret = ads131e08_check_status(st);
-	if (ret)
-		return ret;
+	// ret = ads131e08_check_status(st);
+	// if (ret)
+	// 	return ret;
 
 	return ads131e08_exec_cmd(st, ADS131E08_CMD_STOP);
 }
@@ -700,9 +700,9 @@ static irqreturn_t ads131e08_trigger_handler(int irq, void *private)
 	if (ret)
 		goto out;
 
-	ret = ads131e08_check_status(st);
-	if (ret)
-		return ret;
+	// ret = ads131e08_check_status(st);
+	// if (ret)
+	// 	return ret;
 
 	iio_for_each_active_channel(indio_dev, chn)
 	{
