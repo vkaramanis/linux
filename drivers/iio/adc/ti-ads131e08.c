@@ -249,10 +249,10 @@ static int ads131e08_read_data_continuous(struct ads131e08_state *st,
 {
 	int ret;
 
-	struct spi_transfer transfer = {
+	struct spi_transfer transfer[] = { {
 		.rx_buf = &st->rx_buf,
 		.len = rx_len,
-	};
+	} };
 
 	ret = spi_sync_transfer(st->spi, transfer, 1);
 	if (ret)
@@ -697,7 +697,7 @@ static irqreturn_t ads131e08_trigger_handler(int irq, void *private)
 	unsigned int num_bytes = ADS131E08_NUM_DATA_BYTES(st->data_rate);
 	u8 tweak_offset = num_bytes == 2 ? 1 : 0;
 
-	ret = ads131e08_read_data_continuous(st);
+	ret = ads131e08_read_data_continuous(st, st->readback_len);
 	if (ret)
 		goto out;
 
