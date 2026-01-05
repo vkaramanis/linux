@@ -102,7 +102,8 @@ struct ads131e08_state {
 	unsigned int readback_len;
 	struct completion completion;
 	struct {
-		u8 data[ADS131E08_NUM_DATA_BYTES_MAX];
+		u8 data[ADS131E08_NUM_DATA_BYTES_MAX] __aligned(
+			IIO_DMA_MINALIGN);
 		s64 ts __aligned(8);
 	} tmp_buf;
 
@@ -111,7 +112,8 @@ struct ads131e08_state {
 	 * Add extra one padding byte to be able to access the last channel
 	 * value using u32 pointer
 	 */
-	u8 rx_buf[ADS131E08_NUM_STATUS_BYTES + ADS131E08_NUM_DATA_BYTES_MAX + 1];
+	u8 rx_buf[ADS131E08_NUM_STATUS_BYTES + ADS131E08_NUM_DATA_BYTES_MAX +
+		  1] __aligned(IIO_DMA_MINALIGN);
 };
 
 static const struct ads131e08_info ads131e08_info_tbl[] = {
@@ -255,6 +257,39 @@ static int ads131e08_read_data_continuous(struct ads131e08_state *st,
 	ret = spi_sync_transfer(st->spi, transfer, 1);
 	if (ret)
 		dev_warn(&st->spi->dev, "Read data continuous failed\n");
+
+	return ret;
+}
+
+static int ads131e08_check_status(struct ads131e08_state *st)
+{
+	u8 *buf = st->rx_buf;
+	u32 status;
+	int i;
+	int ret = 0;
+
+	status = get_unaligned_be32(buf) >> 8;
+
+	/* Header check (bits 23:20) should be 0b1100 */
+	if (((status >> 20) & 0xF) != 0xC) {
+		dev_err(&st->spi->dev, "Status word header invalid: 0x%06x\n",
+			status);
+		ret = -EIO;
+	}
+
+	/* FAULT_STATP[7:0] bits 19:12 */
+	for (i = 0; i < st->info->max_channels; i++) {
+		if (status & BIT(19 - i))
+			dev_warn(&st->spi->dev,
+				 "Positive fault detected on channel %d\n", i);
+	}
+
+	/* FAULT_STATN[7:0] bits 11:4 */
+	for (i = 0; i < st->info->max_channels; i++) {
+		if (status & BIT(11 - i))
+			dev_warn(&st->spi->dev,
+				 "Negative fault detected on channel %d\n", i);
+	}
 
 	return ret;
 }
@@ -486,6 +521,10 @@ static int ads131e08_pool_data(struct ads131e08_state *st)
 	if (ret)
 		return ret;
 
+	ret = ads131e08_check_status(st);
+	if (ret)
+		return ret;
+
 	return ads131e08_exec_cmd(st, ADS131E08_CMD_STOP);
 }
 
@@ -656,11 +695,15 @@ static irqreturn_t ads131e08_trigger_handler(int irq, void *private)
 	 * 16 bits of data into the buffer.
 	 */
 	unsigned int num_bytes = ADS131E08_NUM_DATA_BYTES(st->data_rate);
-	u8 tweek_offset = num_bytes == 2 ? 1 : 0;
+	u8 tweak_offset = num_bytes == 2 ? 1 : 0;
 
 	ret = ads131e08_read_data_continuous(st);
 	if (ret)
 		goto out;
+
+	ret = ads131e08_check_status(st);
+	if (ret)
+		return ret;
 
 	iio_for_each_active_channel(indio_dev, chn)
 	{
@@ -668,25 +711,25 @@ static irqreturn_t ads131e08_trigger_handler(int irq, void *private)
 		dest = st->tmp_buf.data + i * ADS131E08_NUM_STORAGE_BYTES;
 
 		/*
-		 * Tweek offset is 0:
+		 * Tweak offset is 0:
 		 * +---+---+---+---+
 		 * |D0 |D1 |D2 | X | (3 data bytes)
 		 * +---+---+---+---+
 		 *  a+0 a+1 a+2 a+3
 		 *
-		 * Tweek offset is 1:
+		 * Tweak offset is 1:
 		 * +---+---+---+---+
 		 * |P0 |D0 |D1 | X | (one padding byte and 2 data bytes)
 		 * +---+---+---+---+
 		 *  a+0 a+1 a+2 a+3
 		 */
-		memcpy(dest + tweek_offset, src, num_bytes);
+		memcpy(dest + tweak_offset, src, num_bytes);
 
 		/*
 		 * Data conversion from 16 bits of data to 24 bits of data
 		 * is done by sign extension (properly filling padding byte).
 		 */
-		if (tweek_offset)
+		if (tweak_offset)
 			*dest = *src & BIT(7) ? 0xff : 0x00;
 
 		i++;
