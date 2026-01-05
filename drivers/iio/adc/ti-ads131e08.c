@@ -26,50 +26,51 @@
 #include <linux/unaligned.h>
 
 /* Commands */
-#define ADS131E08_CMD_RESET		0x06
-#define ADS131E08_CMD_START		0x08
-#define ADS131E08_CMD_STOP		0x0A
-#define ADS131E08_CMD_OFFSETCAL		0x1A
-#define ADS131E08_CMD_SDATAC		0x11
-#define ADS131E08_CMD_RDATA		0x12
-#define ADS131E08_CMD_RREG(r)		(BIT(5) | (r & GENMASK(4, 0)))
-#define ADS131E08_CMD_WREG(r)		(BIT(6) | (r & GENMASK(4, 0)))
+#define ADS131E08_CMD_RESET 0x06
+#define ADS131E08_CMD_START 0x08
+#define ADS131E08_CMD_STOP 0x0A
+#define ADS131E08_CMD_OFFSETCAL 0x1A
+#define ADS131E08_CMD_RDATAC 0x10
+#define ADS131E08_CMD_SDATAC 0x11
+#define ADS131E08_CMD_RDATA 0x12
+#define ADS131E08_CMD_RREG(r) (BIT(5) | (r & GENMASK(4, 0)))
+#define ADS131E08_CMD_WREG(r) (BIT(6) | (r & GENMASK(4, 0)))
 
 /* Registers */
-#define ADS131E08_ADR_CFG1R		0x01
-#define ADS131E08_ADR_CFG3R		0x03
-#define ADS131E08_ADR_CH0R		0x05
+#define ADS131E08_ADR_CFG1R 0x01
+#define ADS131E08_ADR_CFG3R 0x03
+#define ADS131E08_ADR_CH0R 0x05
 
 /* Configuration register 1 */
-#define ADS131E08_CFG1R_DR_MASK		GENMASK(2, 0)
+#define ADS131E08_CFG1R_DR_MASK GENMASK(2, 0)
 
 /* Configuration register 3 */
-#define ADS131E08_CFG3R_PDB_REFBUF_MASK	BIT(7)
-#define ADS131E08_CFG3R_VREF_4V_MASK	BIT(5)
+#define ADS131E08_CFG3R_PDB_REFBUF_MASK BIT(7)
+#define ADS131E08_CFG3R_VREF_4V_MASK BIT(5)
 
 /* Channel settings register */
-#define ADS131E08_CHR_GAIN_MASK		GENMASK(6, 4)
-#define ADS131E08_CHR_MUX_MASK		GENMASK(2, 0)
-#define ADS131E08_CHR_PWD_MASK		BIT(7)
+#define ADS131E08_CHR_GAIN_MASK GENMASK(6, 4)
+#define ADS131E08_CHR_MUX_MASK GENMASK(2, 0)
+#define ADS131E08_CHR_PWD_MASK BIT(7)
 
 /* ADC  misc */
-#define ADS131E08_DEFAULT_DATA_RATE	1
-#define ADS131E08_DEFAULT_PGA_GAIN	1
-#define ADS131E08_DEFAULT_MUX		0
+#define ADS131E08_DEFAULT_DATA_RATE 1
+#define ADS131E08_DEFAULT_PGA_GAIN 1
+#define ADS131E08_DEFAULT_MUX 0
 
-#define ADS131E08_VREF_2V4_mV		2400
-#define ADS131E08_VREF_4V_mV		4000
+#define ADS131E08_VREF_2V4_mV 2400
+#define ADS131E08_VREF_4V_mV 4000
 
-#define ADS131E08_WAIT_RESET_CYCLES	18
-#define ADS131E08_WAIT_SDECODE_CYCLES	4
-#define ADS131E08_WAIT_OFFSETCAL_MS	153
-#define ADS131E08_MAX_SETTLING_TIME_MS	6
+#define ADS131E08_WAIT_RESET_CYCLES 18
+#define ADS131E08_WAIT_SDECODE_CYCLES 4
+#define ADS131E08_WAIT_OFFSETCAL_MS 153
+#define ADS131E08_MAX_SETTLING_TIME_MS 6
 
-#define ADS131E08_NUM_STATUS_BYTES	3
-#define ADS131E08_NUM_DATA_BYTES_MAX	24
-#define ADS131E08_NUM_DATA_BYTES(dr)	(((dr) >= 32) ? 2 : 3)
-#define ADS131E08_NUM_DATA_BITS(dr)	(ADS131E08_NUM_DATA_BYTES(dr) * 8)
-#define ADS131E08_NUM_STORAGE_BYTES	4
+#define ADS131E08_NUM_STATUS_BYTES 3
+#define ADS131E08_NUM_DATA_BYTES_MAX 24
+#define ADS131E08_NUM_DATA_BYTES(dr) (((dr) >= 32) ? 2 : 3)
+#define ADS131E08_NUM_DATA_BITS(dr) (ADS131E08_NUM_DATA_BYTES(dr) * 8)
+#define ADS131E08_NUM_STORAGE_BYTES 4
 
 enum ads131e08_ids {
 	ads131e04,
@@ -110,8 +111,7 @@ struct ads131e08_state {
 	 * Add extra one padding byte to be able to access the last channel
 	 * value using u32 pointer
 	 */
-	u8 rx_buf[ADS131E08_NUM_STATUS_BYTES +
-		ADS131E08_NUM_DATA_BYTES_MAX + 1];
+	u8 rx_buf[ADS131E08_NUM_STATUS_BYTES + ADS131E08_NUM_DATA_BYTES_MAX + 1];
 };
 
 static const struct ads131e08_info ads131e08_info_tbl[] = {
@@ -130,31 +130,26 @@ static const struct ads131e08_info ads131e08_info_tbl[] = {
 };
 
 struct ads131e08_data_rate_desc {
-	unsigned int rate;  /* data rate in kSPS */
-	u8 reg;             /* reg value */
+	unsigned int rate; /* data rate in kSPS */
+	u8 reg; /* reg value */
 };
 
 static const struct ads131e08_data_rate_desc ads131e08_data_rate_tbl[] = {
-	{ .rate = 64,   .reg = 0x00 },
-	{ .rate = 32,   .reg = 0x01 },
-	{ .rate = 16,   .reg = 0x02 },
-	{ .rate = 8,    .reg = 0x03 },
-	{ .rate = 4,    .reg = 0x04 },
-	{ .rate = 2,    .reg = 0x05 },
-	{ .rate = 1,    .reg = 0x06 },
+	{ .rate = 64, .reg = 0x00 }, { .rate = 32, .reg = 0x01 },
+	{ .rate = 16, .reg = 0x02 }, { .rate = 8, .reg = 0x03 },
+	{ .rate = 4, .reg = 0x04 },  { .rate = 2, .reg = 0x05 },
+	{ .rate = 1, .reg = 0x06 },
 };
 
 struct ads131e08_pga_gain_desc {
-	unsigned int gain;  /* PGA gain value */
-	u8 reg;             /* field value */
+	unsigned int gain; /* PGA gain value */
+	u8 reg; /* field value */
 };
 
 static const struct ads131e08_pga_gain_desc ads131e08_pga_gain_tbl[] = {
-	{ .gain = 1,   .reg = 0x01 },
-	{ .gain = 2,   .reg = 0x02 },
-	{ .gain = 4,   .reg = 0x04 },
-	{ .gain = 8,   .reg = 0x05 },
-	{ .gain = 12,  .reg = 0x06 },
+	{ .gain = 1, .reg = 0x01 },  { .gain = 2, .reg = 0x02 },
+	{ .gain = 4, .reg = 0x04 },  { .gain = 8, .reg = 0x05 },
+	{ .gain = 12, .reg = 0x06 },
 };
 
 static const u8 ads131e08_valid_channel_mux_values[] = { 0, 1, 3, 4 };
@@ -231,7 +226,8 @@ static int ads131e08_read_data(struct ads131e08_state *st, int rx_len)
 		{
 			.tx_buf = &st->tx_buf,
 			.len = 1,
-		}, {
+		},
+		{
 			.rx_buf = &st->rx_buf,
 			.len = rx_len,
 		},
@@ -242,6 +238,23 @@ static int ads131e08_read_data(struct ads131e08_state *st, int rx_len)
 	ret = spi_sync_transfer(st->spi, transfer, ARRAY_SIZE(transfer));
 	if (ret)
 		dev_err(&st->spi->dev, "Read data failed\n");
+
+	return ret;
+}
+
+static int ads131e08_read_data_continuous(struct ads131e08_state *st,
+					  int rx_len)
+{
+	int ret;
+
+	struct spi_transfer transfer = {
+		.rx_buf = &st->rx_buf,
+		.len = rx_len,
+	};
+
+	ret = spi_sync_transfer(st->spi, transfer, 1);
+	if (ret)
+		dev_warn(&st->spi->dev, "Read data continuous failed\n");
 
 	return ret;
 }
@@ -266,7 +279,7 @@ static int ads131e08_set_data_rate(struct ads131e08_state *st, int data_rate)
 
 	reg &= ~ADS131E08_CFG1R_DR_MASK;
 	reg |= FIELD_PREP(ADS131E08_CFG1R_DR_MASK,
-		ads131e08_data_rate_tbl[i].reg);
+			  ads131e08_data_rate_tbl[i].reg);
 
 	ret = ads131e08_write_reg(st, ADS131E08_ADR_CFG1R, reg);
 	if (ret)
@@ -274,14 +287,14 @@ static int ads131e08_set_data_rate(struct ads131e08_state *st, int data_rate)
 
 	st->data_rate = data_rate;
 	st->readback_len = ADS131E08_NUM_STATUS_BYTES +
-		ADS131E08_NUM_DATA_BYTES(st->data_rate) *
-		st->info->max_channels;
+			   ADS131E08_NUM_DATA_BYTES(st->data_rate) *
+				   st->info->max_channels;
 
 	return 0;
 }
 
 static int ads131e08_pga_gain_to_field_value(struct ads131e08_state *st,
-	unsigned int pga_gain)
+					     unsigned int pga_gain)
 {
 	int i;
 
@@ -299,7 +312,7 @@ static int ads131e08_pga_gain_to_field_value(struct ads131e08_state *st,
 }
 
 static int ads131e08_set_pga_gain(struct ads131e08_state *st,
-	unsigned int channel, unsigned int pga_gain)
+				  unsigned int channel, unsigned int pga_gain)
 {
 	int field_value, reg;
 
@@ -318,7 +331,7 @@ static int ads131e08_set_pga_gain(struct ads131e08_state *st,
 }
 
 static int ads131e08_validate_channel_mux(struct ads131e08_state *st,
-	unsigned int mux)
+					  unsigned int mux)
 {
 	int i;
 
@@ -336,7 +349,7 @@ static int ads131e08_validate_channel_mux(struct ads131e08_state *st,
 }
 
 static int ads131e08_set_channel_mux(struct ads131e08_state *st,
-	unsigned int channel, unsigned int mux)
+				     unsigned int channel, unsigned int mux)
 {
 	int reg;
 
@@ -351,7 +364,7 @@ static int ads131e08_set_channel_mux(struct ads131e08_state *st,
 }
 
 static int ads131e08_power_down_channel(struct ads131e08_state *st,
-	unsigned int channel, bool value)
+					unsigned int channel, bool value)
 {
 	int reg;
 
@@ -378,7 +391,7 @@ static int ads131e08_config_reference_voltage(struct ads131e08_state *st)
 		reg |= FIELD_PREP(ADS131E08_CFG3R_PDB_REFBUF_MASK, 1);
 		reg &= ~ADS131E08_CFG3R_VREF_4V_MASK;
 		reg |= FIELD_PREP(ADS131E08_CFG3R_VREF_4V_MASK,
-			st->vref_mv == ADS131E08_VREF_4V_mV);
+				  st->vref_mv == ADS131E08_VREF_4V_mV);
 	}
 
 	return ads131e08_write_reg(st, ADS131E08_ADR_CFG3R, reg);
@@ -410,14 +423,14 @@ static int ads131e08_initial_config(struct iio_dev *indio_dev)
 	if (ret)
 		return ret;
 
-	for (i = 0;  i < indio_dev->num_channels; i++) {
+	for (i = 0; i < indio_dev->num_channels; i++) {
 		ret = ads131e08_set_pga_gain(st, channel->channel,
-			st->channel_config[i].pga_gain);
+					     st->channel_config[i].pga_gain);
 		if (ret)
 			return ret;
 
 		ret = ads131e08_set_channel_mux(st, channel->channel,
-			st->channel_config[i].mux);
+						st->channel_config[i].mux);
 		if (ret)
 			return ret;
 
@@ -477,7 +490,8 @@ static int ads131e08_pool_data(struct ads131e08_state *st)
 }
 
 static int ads131e08_read_direct(struct iio_dev *indio_dev,
-	struct iio_chan_spec const *channel, int *value)
+				 struct iio_chan_spec const *channel,
+				 int *value)
 {
 	struct ads131e08_state *st = iio_priv(indio_dev);
 	u8 num_bits, *src;
@@ -488,17 +502,18 @@ static int ads131e08_read_direct(struct iio_dev *indio_dev,
 		return ret;
 
 	src = st->rx_buf + ADS131E08_NUM_STATUS_BYTES +
-		channel->channel * ADS131E08_NUM_DATA_BYTES(st->data_rate);
+	      channel->channel * ADS131E08_NUM_DATA_BYTES(st->data_rate);
 
 	num_bits = ADS131E08_NUM_DATA_BITS(st->data_rate);
-	*value = sign_extend32(get_unaligned_be32(src) >> (32 - num_bits), num_bits - 1);
+	*value = sign_extend32(get_unaligned_be32(src) >> (32 - num_bits),
+			       num_bits - 1);
 
 	return 0;
 }
 
 static int ads131e08_read_raw(struct iio_dev *indio_dev,
-	struct iio_chan_spec const *channel, int *value,
-	int *value2, long mask)
+			      struct iio_chan_spec const *channel, int *value,
+			      int *value2, long mask)
 {
 	struct ads131e08_state *st = iio_priv(indio_dev);
 	int ret;
@@ -543,8 +558,8 @@ static int ads131e08_read_raw(struct iio_dev *indio_dev,
 }
 
 static int ads131e08_write_raw(struct iio_dev *indio_dev,
-	struct iio_chan_spec const *channel, int value,
-	int value2, long mask)
+			       struct iio_chan_spec const *channel, int value,
+			       int value2, long mask)
 {
 	struct ads131e08_state *st = iio_priv(indio_dev);
 	int ret;
@@ -567,8 +582,7 @@ static int ads131e08_write_raw(struct iio_dev *indio_dev,
 static IIO_CONST_ATTR_SAMP_FREQ_AVAIL("1 2 4 8 16 32 64");
 
 static struct attribute *ads131e08_attributes[] = {
-	&iio_const_attr_sampling_frequency_available.dev_attr.attr,
-	NULL
+	&iio_const_attr_sampling_frequency_available.dev_attr.attr, NULL
 };
 
 static const struct attribute_group ads131e08_attribute_group = {
@@ -576,7 +590,8 @@ static const struct attribute_group ads131e08_attribute_group = {
 };
 
 static int ads131e08_debugfs_reg_access(struct iio_dev *indio_dev,
-	unsigned int reg, unsigned int writeval, unsigned int *readval)
+					unsigned int reg, unsigned int writeval,
+					unsigned int *readval)
 {
 	struct ads131e08_state *st = iio_priv(indio_dev);
 
@@ -600,9 +615,23 @@ static int ads131e08_set_trigger_state(struct iio_trigger *trig, bool state)
 {
 	struct iio_dev *indio_dev = iio_trigger_get_drvdata(trig);
 	struct ads131e08_state *st = iio_priv(indio_dev);
-	u8 cmd = state ? ADS131E08_CMD_START : ADS131E08_CMD_STOP;
+	int ret;
 
-	return ads131e08_exec_cmd(st, cmd);
+	if (state) {
+		ret = ads131e08_exec_cmd(st, ADS131E08_CMD_RDATAC);
+		if (ret)
+			return ret;
+
+		ret = ads131e08_exec_cmd(st, ADS131E08_CMD_START);
+	} else {
+		ret = ads131e08_exec_cmd(st, ADS131E08_CMD_SDATAC);
+		if (ret)
+			return ret;
+
+		ret = ads131e08_exec_cmd(st, ADS131E08_CMD_STOP);
+	}
+
+	return ret;
 }
 
 static const struct iio_trigger_ops ads131e08_trigger_ops = {
@@ -629,15 +658,12 @@ static irqreturn_t ads131e08_trigger_handler(int irq, void *private)
 	unsigned int num_bytes = ADS131E08_NUM_DATA_BYTES(st->data_rate);
 	u8 tweek_offset = num_bytes == 2 ? 1 : 0;
 
-	if (iio_trigger_using_own(indio_dev))
-		ret = ads131e08_read_data(st, st->readback_len);
-	else
-		ret = ads131e08_pool_data(st);
-
+	ret = ads131e08_read_data_continuous(st);
 	if (ret)
 		goto out;
 
-	iio_for_each_active_channel(indio_dev, chn) {
+	iio_for_each_active_channel(indio_dev, chn)
+	{
 		src = st->rx_buf + ADS131E08_NUM_STATUS_BYTES + chn * num_bytes;
 		dest = st->tmp_buf.data + i * ADS131E08_NUM_STORAGE_BYTES;
 
@@ -667,7 +693,7 @@ static irqreturn_t ads131e08_trigger_handler(int irq, void *private)
 	}
 
 	iio_push_to_buffers_with_timestamp(indio_dev, st->tmp_buf.data,
-		iio_get_time_ns(indio_dev));
+					   iio_get_time_ns(indio_dev));
 
 out:
 	iio_trigger_notify_done(indio_dev->trig);
@@ -720,17 +746,18 @@ static int ads131e08_alloc_channels(struct iio_dev *indio_dev)
 	}
 
 	if (num_channels > st->info->max_channels) {
-		dev_err(&st->spi->dev, "num of channel children out of range\n");
+		dev_err(&st->spi->dev,
+			"num of channel children out of range\n");
 		return -EINVAL;
 	}
 
-	channels = devm_kcalloc(&st->spi->dev, num_channels,
-		sizeof(*channels), GFP_KERNEL);
+	channels = devm_kcalloc(&st->spi->dev, num_channels, sizeof(*channels),
+				GFP_KERNEL);
 	if (!channels)
 		return -ENOMEM;
 
 	channel_config = devm_kcalloc(&st->spi->dev, num_channels,
-		sizeof(*channel_config), GFP_KERNEL);
+				      sizeof(*channel_config), GFP_KERNEL);
 	if (!channel_config)
 		return -ENOMEM;
 
@@ -767,8 +794,9 @@ static int ads131e08_alloc_channels(struct iio_dev *indio_dev)
 		channels[i].channel = channel;
 		channels[i].address = i;
 		channels[i].info_mask_separate = BIT(IIO_CHAN_INFO_RAW) |
-						BIT(IIO_CHAN_INFO_SCALE);
-		channels[i].info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SAMP_FREQ);
+						 BIT(IIO_CHAN_INFO_SCALE);
+		channels[i].info_mask_shared_by_type =
+			BIT(IIO_CHAN_INFO_SAMP_FREQ);
 		channels[i].scan_index = channel;
 		channels[i].scan_type.sign = 's';
 		channels[i].scan_type.realbits = 24;
@@ -783,7 +811,6 @@ static int ads131e08_alloc_channels(struct iio_dev *indio_dev)
 	st->channel_config = channel_config;
 
 	return 0;
-
 }
 
 static void ads131e08_regulator_disable(void *data)
@@ -824,15 +851,14 @@ static int ads131e08_probe(struct spi_device *spi)
 
 	indio_dev->name = st->info->name;
 	indio_dev->info = &ads131e08_iio_info;
-	indio_dev->modes = INDIO_DIRECT_MODE;
+	indio_dev->modes = INDIO_DIRECT_MODE | INDIO_BUFFER_TRIGGERED;
 
 	init_completion(&st->completion);
 
 	if (spi->irq) {
-		ret = devm_request_irq(&spi->dev, spi->irq,
-			ads131e08_interrupt,
-			IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
-			spi->dev.driver->name, indio_dev);
+		ret = devm_request_irq(&spi->dev, spi->irq, ads131e08_interrupt,
+				       IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
+				       spi->dev.driver->name, indio_dev);
 		if (ret)
 			return dev_err_probe(&spi->dev, ret,
 					     "request irq failed\n");
@@ -842,7 +868,8 @@ static int ads131e08_probe(struct spi_device *spi)
 	}
 
 	st->trig = devm_iio_trigger_alloc(&spi->dev, "%s-dev%d",
-		indio_dev->name, iio_device_id(indio_dev));
+					  indio_dev->name,
+					  iio_device_id(indio_dev));
 	if (!st->trig) {
 		dev_err(&spi->dev, "failed to allocate IIO trigger\n");
 		return -ENOMEM;
@@ -859,8 +886,8 @@ static int ads131e08_probe(struct spi_device *spi)
 
 	indio_dev->trig = iio_trigger_get(st->trig);
 
-	ret = devm_iio_triggered_buffer_setup(&spi->dev, indio_dev,
-		NULL, &ads131e08_trigger_handler, NULL);
+	ret = devm_iio_triggered_buffer_setup(&spi->dev, indio_dev, NULL,
+					      &ads131e08_trigger_handler, NULL);
 	if (ret) {
 		dev_err(&spi->dev, "failed to setup IIO buffer\n");
 		return ret;
@@ -875,7 +902,8 @@ static int ads131e08_probe(struct spi_device *spi)
 			return ret;
 		}
 
-		ret = devm_add_action_or_reset(&spi->dev, ads131e08_regulator_disable, st);
+		ret = devm_add_action_or_reset(&spi->dev,
+					       ads131e08_regulator_disable, st);
 		if (ret)
 			return ret;
 	} else {
@@ -893,7 +921,7 @@ static int ads131e08_probe(struct spi_device *spi)
 	adc_clk_hz = clk_get_rate(st->adc_clk);
 	if (!adc_clk_hz) {
 		dev_err(&spi->dev, "failed to get the ADC clock rate\n");
-		return  -EINVAL;
+		return -EINVAL;
 	}
 
 	adc_clk_ns = NSEC_PER_SEC / adc_clk_hz;
@@ -912,13 +940,19 @@ static int ads131e08_probe(struct spi_device *spi)
 }
 
 static const struct of_device_id ads131e08_of_match[] = {
-	{ .compatible = "ti,ads131e04",
-	  .data = &ads131e08_info_tbl[ads131e04], },
-	{ .compatible = "ti,ads131e06",
-	  .data = &ads131e08_info_tbl[ads131e06], },
-	{ .compatible = "ti,ads131e08",
-	  .data = &ads131e08_info_tbl[ads131e08], },
-	{ }
+	{
+		.compatible = "ti,ads131e04",
+		.data = &ads131e08_info_tbl[ads131e04],
+	},
+	{
+		.compatible = "ti,ads131e06",
+		.data = &ads131e08_info_tbl[ads131e06],
+	},
+	{
+		.compatible = "ti,ads131e08",
+		.data = &ads131e08_info_tbl[ads131e08],
+	},
+	{}
 };
 MODULE_DEVICE_TABLE(of, ads131e08_of_match);
 
@@ -926,7 +960,7 @@ static const struct spi_device_id ads131e08_ids[] = {
 	{ "ads131e04", (kernel_ulong_t)&ads131e08_info_tbl[ads131e04] },
 	{ "ads131e06", (kernel_ulong_t)&ads131e08_info_tbl[ads131e06] },
 	{ "ads131e08", (kernel_ulong_t)&ads131e08_info_tbl[ads131e08] },
-	{ }
+	{}
 };
 MODULE_DEVICE_TABLE(spi, ads131e08_ids);
 
@@ -941,5 +975,6 @@ static struct spi_driver ads131e08_driver = {
 module_spi_driver(ads131e08_driver);
 
 MODULE_AUTHOR("Tomislav Denis <tomislav.denis@avl.com>");
+MODULE_AUTHOR("Viktor Karamanis <viktor.karamanis@outlook.com>");
 MODULE_DESCRIPTION("Driver for ADS131E0x ADC family");
 MODULE_LICENSE("GPL v2");
