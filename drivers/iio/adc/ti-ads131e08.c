@@ -264,11 +264,10 @@ static int ads131e08_read_data_continuous(struct ads131e08_state *st,
 static int ads131e08_check_status(struct ads131e08_state *st)
 {
 	u8 *buf = st->rx_buf;
-	u32 status;
 	int i;
 	int ret = 0;
 
-	status = get_unaligned_be32(buf) >> 8;
+	u32 status = ((u32)buf[0] << 16) | ((u32)buf[1] << 8) | ((u32)buf[2]);
 
 	/* Header check (bits 23:20) should be 0b1100 */
 	if (((status >> 20) & 0xF) != 0xC) {
