@@ -186,20 +186,19 @@ static int ads131e08_read_reg(struct ads131e08_state *st, u8 reg)
 	int ret;
 	struct spi_transfer transfer[] = {
 		{
-			.tx_buf = &st->tx_buf,
-			.len = 2,
+			.tx_buf = st->tx_buf,
+			.rx_buf = st->rx_buf,
+			.len = 3,
 			.delay = {
 				.value = st->sdecode_delay_us,
 				.unit = SPI_DELAY_UNIT_USECS,
 			},
-		}, {
-			.rx_buf = &st->rx_buf,
-			.len = 1,
-		},
+		}
 	};
 
 	st->tx_buf[0] = ADS131E08_CMD_RREG(reg);
 	st->tx_buf[1] = 0;
+	st->tx_buf[2] = 0;
 
 	ret = spi_sync_transfer(st->spi, transfer, ARRAY_SIZE(transfer));
 	if (ret) {
@@ -207,7 +206,7 @@ static int ads131e08_read_reg(struct ads131e08_state *st, u8 reg)
 		return ret;
 	}
 
-	return st->rx_buf[0];
+	return st->rx_buf[2];
 }
 
 static int ads131e08_write_reg(struct ads131e08_state *st, u8 reg, u8 value)
@@ -215,8 +214,8 @@ static int ads131e08_write_reg(struct ads131e08_state *st, u8 reg, u8 value)
 	int ret;
 	struct spi_transfer transfer[] = {
 		{
-			.tx_buf = &st->tx_buf,
-			.len = 3,
+			.tx_buf = st->tx_buf,
+			.len = 4,
 			.delay = {
 				.value = st->sdecode_delay_us,
 				.unit = SPI_DELAY_UNIT_USECS,
@@ -227,6 +226,7 @@ static int ads131e08_write_reg(struct ads131e08_state *st, u8 reg, u8 value)
 	st->tx_buf[0] = ADS131E08_CMD_WREG(reg);
 	st->tx_buf[1] = 0;
 	st->tx_buf[2] = value;
+	st->tx_buf[3] = 0;
 
 	ret = spi_sync_transfer(st->spi, transfer, ARRAY_SIZE(transfer));
 	if (ret)
@@ -240,11 +240,11 @@ static int ads131e08_read_data(struct ads131e08_state *st, int rx_len)
 	int ret;
 	struct spi_transfer transfer[] = {
 		{
-			.tx_buf = &st->tx_buf,
+			.tx_buf = st->tx_buf,
 			.len = 1,
 		},
 		{
-			.rx_buf = &st->rx_buf,
+			.rx_buf = st->rx_buf,
 			.len = rx_len,
 		},
 	};
@@ -1013,7 +1013,7 @@ static int ads131e08_probe(struct spi_device *spi)
 	st->xfer.rx_buf = st->rx_buf;
 	st->xfer.len = st->readback_len;
 	spi_message_add_tail(&st->xfer, &st->msg);
-	memset(st->tx_buf, 0xff, sizeof(st->tx_buf));
+	memset(st->tx_buf, 0x00, sizeof(st->tx_buf));
 
 	ret = ads131e08_initial_config(indio_dev);
 	if (ret) {
