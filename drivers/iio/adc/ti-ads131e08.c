@@ -272,14 +272,14 @@ static int ads131e08_check_status(struct ads131e08_state *st)
 	/* FAULT_STATP[7:0] bits 19:12 */
 	for (i = 0; i < st->info->max_channels; i++) {
 		if (status & BIT(19 - i))
-			dev_warn(&st->spi->dev,
+			dev_warn_ratelimited(&st->spi->dev,
 				 "Positive fault detected on channel %d\n", i);
 	}
 
 	/* FAULT_STATN[7:0] bits 11:4 */
 	for (i = 0; i < st->info->max_channels; i++) {
 		if (status & BIT(11 - i))
-			dev_warn(&st->spi->dev,
+			dev_warn_ratelimited(&st->spi->dev,
 				 "Negative fault detected on channel %d\n", i);
 	}
 
