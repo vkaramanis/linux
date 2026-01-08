@@ -114,6 +114,10 @@ struct ads131e08_state {
 	 */
 	u8 rx_buf[ADS131E08_NUM_STATUS_BYTES + ADS131E08_NUM_DATA_BYTES_MAX +
 		  1] __aligned(IIO_DMA_MINALIGN);
+
+	struct spi_transfer xfer;
+	struct spi_message msg;
+	atomic64_t last_ts;
 };
 
 static const struct ads131e08_info ads131e08_info_tbl[] = {
@@ -244,23 +248,6 @@ static int ads131e08_read_data(struct ads131e08_state *st, int rx_len)
 	return ret;
 }
 
-static int ads131e08_read_data_continuous(struct ads131e08_state *st,
-					  int rx_len)
-{
-	int ret;
-
-	struct spi_transfer transfer[] = { {
-		.rx_buf = &st->rx_buf,
-		.len = rx_len,
-	} };
-
-	ret = spi_sync_transfer(st->spi, transfer, 1);
-	if (ret)
-		dev_warn(&st->spi->dev, "Read data continuous failed\n");
-
-	return ret;
-}
-
 static int ads131e08_check_status(struct ads131e08_state *st)
 {
 	u8 *buf = st->rx_buf;
@@ -323,6 +310,7 @@ static int ads131e08_set_data_rate(struct ads131e08_state *st, int data_rate)
 	st->readback_len = ADS131E08_NUM_STATUS_BYTES +
 			   ADS131E08_NUM_DATA_BYTES(st->data_rate) *
 				   st->info->max_channels;
+	st->xfer.len = st->readback_len;
 
 	return 0;
 }
@@ -502,7 +490,6 @@ static int ads131e08_initial_config(struct iio_dev *indio_dev)
 
 static int ads131e08_pool_data(struct ads131e08_state *st)
 {
-	unsigned long timeout;
 	int ret;
 
 	reinit_completion(&st->completion);
@@ -511,8 +498,9 @@ static int ads131e08_pool_data(struct ads131e08_state *st)
 	if (ret)
 		return ret;
 
-	timeout = msecs_to_jiffies(ADS131E08_MAX_SETTLING_TIME_MS);
-	ret = wait_for_completion_timeout(&st->completion, timeout);
+	ret = wait_for_completion_timeout(
+		&st->completion,
+		msecs_to_jiffies(ADS131E08_MAX_SETTLING_TIME_MS));
 	if (!ret)
 		return -ETIMEDOUT;
 
@@ -684,7 +672,6 @@ static irqreturn_t ads131e08_trigger_handler(int irq, void *private)
 	struct ads131e08_state *st = iio_priv(indio_dev);
 	unsigned int chn, i = 0;
 	u8 *src, *dest;
-	int ret;
 
 	/*
 	 * The number of data bits per channel depends on the data rate.
@@ -696,9 +683,10 @@ static irqreturn_t ads131e08_trigger_handler(int irq, void *private)
 	unsigned int num_bytes = ADS131E08_NUM_DATA_BYTES(st->data_rate);
 	u8 tweak_offset = num_bytes == 2 ? 1 : 0;
 
-	ret = ads131e08_read_data_continuous(st, st->readback_len);
-	if (ret)
+	if (spi_sync(st->spi, &st->msg)) {
+		dev_warn(&st->spi->dev, "continuous data read failed\n");
 		goto out;
+	}
 
 	// ret = ads131e08_check_status(st);
 	// if (ret)
@@ -735,7 +723,7 @@ static irqreturn_t ads131e08_trigger_handler(int irq, void *private)
 	}
 
 	iio_push_to_buffers_with_timestamp(indio_dev, st->tmp_buf.data,
-					   iio_get_time_ns(indio_dev));
+					   atomic64_read(&st->last_ts));
 
 out:
 	iio_trigger_notify_done(indio_dev->trig);
@@ -748,9 +736,10 @@ static irqreturn_t ads131e08_interrupt(int irq, void *private)
 	struct iio_dev *indio_dev = private;
 	struct ads131e08_state *st = iio_priv(indio_dev);
 
-	if (iio_buffer_enabled(indio_dev) && iio_trigger_using_own(indio_dev))
-		iio_trigger_poll(st->trig);
-	else
+	if (iio_buffer_enabled(indio_dev)) {
+		atomic64_set(&st->last_ts, iio_get_time_ns(indio_dev));
+		iio_trigger_poll_chained(st->trig);
+	} else
 		complete(&st->completion);
 
 	return IRQ_HANDLED;
@@ -839,7 +828,7 @@ static int ads131e08_alloc_channels(struct iio_dev *indio_dev)
 						 BIT(IIO_CHAN_INFO_SCALE);
 		channels[i].info_mask_shared_by_type =
 			BIT(IIO_CHAN_INFO_SAMP_FREQ);
-		channels[i].scan_index = channel;
+		channels[i].scan_index = i;
 		channels[i].scan_type.sign = 's';
 		channels[i].scan_type.realbits = 24;
 		channels[i].scan_type.storagebits = 32;
@@ -899,7 +888,7 @@ static int ads131e08_probe(struct spi_device *spi)
 
 	if (spi->irq) {
 		ret = devm_request_irq(&spi->dev, spi->irq, ads131e08_interrupt,
-				       IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
+				       IRQF_TRIGGER_FALLING,
 				       spi->dev.driver->name, indio_dev);
 		if (ret)
 			return dev_err_probe(&spi->dev, ret,
@@ -971,6 +960,12 @@ static int ads131e08_probe(struct spi_device *spi)
 		ADS131E08_WAIT_SDECODE_CYCLES * adc_clk_ns, NSEC_PER_USEC);
 	st->reset_delay_us = DIV_ROUND_UP(
 		ADS131E08_WAIT_RESET_CYCLES * adc_clk_ns, NSEC_PER_USEC);
+
+	spi_message_init(&st->msg);
+	memset(&st->xfer, 0, sizeof(st->xfer));
+	st->xfer.rx_buf = st->rx_buf;
+	st->xfer.len = st->readback_len;
+	spi_message_add_tail(&st->xfer, &st->msg);
 
 	ret = ads131e08_initial_config(indio_dev);
 	if (ret) {
