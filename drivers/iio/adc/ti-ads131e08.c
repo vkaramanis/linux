@@ -975,14 +975,7 @@ static int ads131e08_probe(struct spi_device *spi)
 		return ret;
 	}
 
-	ret = devm_iio_device_register(&spi->dev, indio_dev);
-	if (ret) {
-		dev_err(&spi->dev, "device registration failed\n");
-		return ret;
-	}
-	
-	dev_info(&spi->dev, "ADS131E0X initialized successfully\n");
-	return 0
+	return devm_iio_device_register(&spi->dev, indio_dev);
 }
 
 static const struct of_device_id ads131e08_of_match[] = {
@@ -1022,5 +1015,5 @@ module_spi_driver(ads131e08_driver);
 
 MODULE_AUTHOR("Tomislav Denis <tomislav.denis@avl.com>");
 MODULE_AUTHOR("Viktor Karamanis <viktor.karamanis@outlook.com>");
-MODULE_DESCRIPTION("Driver for ADS131E0x ADC family");
+MODULE_DESCRIPTION("Driver for ADS131E0x ADC family v2");
 MODULE_LICENSE("GPL v2");
