@@ -1060,6 +1060,6 @@ module_spi_driver(ads131e08_driver);
 
 MODULE_AUTHOR("Tomislav Denis <tomislav.denis@avl.com>");
 MODULE_AUTHOR("Viktor Karamanis <viktor.karamanis@outlook.com>");
-MODULE_DESCRIPTION(
-	"Driver for ADS131E0x ADC family build: " KBUILD_BUILD_TIMESTAMP);
+MODULE_DESCRIPTION("Driver for ADS131E0x ADC family build: " __DATE__
+		   " " __TIME__);
 MODULE_LICENSE("GPL v2");
