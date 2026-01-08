@@ -688,7 +688,7 @@ static irqreturn_t ads131e08_trigger_handler(int irq, void *private)
 		goto out;
 	}
 
-	ret = ads131e08_check_status(st);
+	int ret = ads131e08_check_status(st);
 	if (ret) {
 		iio_trigger_notify_done(indio_dev->trig);
 		return ret;
