@@ -543,12 +543,14 @@ static int ads131e08_read_direct(struct iio_dev *indio_dev,
 	return 0;
 }
 
-static ssize_t sps_show(struct iio_dev *indio_dev,
-			struct iio_chan_spec const *chan, char *buf)
+static ssize_t sps_show(struct device *dev,
+                        struct device_attribute *attr,
+                        char *buf)
 {
-	struct ads131e08_state *st = iio_priv(indio_dev);
+    struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+    struct ads131e08_state *st = iio_priv(indio_dev);
 
-	return scnprintf(buf, PAGE_SIZE, "%u\n", st->bench.sps);
+    return scnprintf(buf, PAGE_SIZE, "%u\n", st->bench.sps);
 }
 
 static int ads131e08_read_raw(struct iio_dev *indio_dev,
