@@ -272,15 +272,17 @@ static int ads131e08_check_status(struct ads131e08_state *st)
 	/* FAULT_STATP[7:0] bits 19:12 */
 	for (i = 0; i < st->info->max_channels; i++) {
 		if (status & BIT(19 - i))
-			dev_warn_ratelimited(&st->spi->dev,
-				 "Positive fault detected on channel %d\n", i);
+			dev_warn_ratelimited(
+				&st->spi->dev,
+				"Positive fault detected on channel %d\n", i);
 	}
 
 	/* FAULT_STATN[7:0] bits 11:4 */
 	for (i = 0; i < st->info->max_channels; i++) {
 		if (status & BIT(11 - i))
-			dev_warn_ratelimited(&st->spi->dev,
-				 "Negative fault detected on channel %d\n", i);
+			dev_warn_ratelimited(
+				&st->spi->dev,
+				"Negative fault detected on channel %d\n", i);
 	}
 
 	return ret;
@@ -317,6 +319,12 @@ static int ads131e08_set_data_rate(struct ads131e08_state *st, int data_rate)
 			   ADS131E08_NUM_DATA_BYTES(st->data_rate) *
 				   st->info->max_channels;
 	st->xfer.len = st->readback_len;
+
+	reg = ads131e08_read_reg(st, ADS131E08_ADR_CFG1R);
+	if (reg >= 0)
+		dev_info(&st->spi->dev,
+			 "data rate set to %u ksps (CFG1R=0x%02x)\n",
+			 st->data_rate, reg);
 
 	return 0;
 }
@@ -543,14 +551,13 @@ static int ads131e08_read_direct(struct iio_dev *indio_dev,
 	return 0;
 }
 
-static ssize_t sps_show(struct device *dev,
-                        struct device_attribute *attr,
-                        char *buf)
+static ssize_t sps_show(struct device *dev, struct device_attribute *attr,
+			char *buf)
 {
-    struct iio_dev *indio_dev = dev_to_iio_dev(dev);
-    struct ads131e08_state *st = iio_priv(indio_dev);
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct ads131e08_state *st = iio_priv(indio_dev);
 
-    return scnprintf(buf, PAGE_SIZE, "%u\n", st->bench.sps);
+	return scnprintf(buf, PAGE_SIZE, "%u\n", st->bench.sps);
 }
 
 static int ads131e08_read_raw(struct iio_dev *indio_dev,
@@ -1006,6 +1013,7 @@ static int ads131e08_probe(struct spi_device *spi)
 	st->xfer.rx_buf = st->rx_buf;
 	st->xfer.len = st->readback_len;
 	spi_message_add_tail(&st->xfer, &st->msg);
+	memset(st->tx_buf, 0xff, sizeof(st->tx_buf));
 
 	ret = ads131e08_initial_config(indio_dev);
 	if (ret) {
@@ -1053,5 +1061,6 @@ module_spi_driver(ads131e08_driver);
 
 MODULE_AUTHOR("Tomislav Denis <tomislav.denis@avl.com>");
 MODULE_AUTHOR("Viktor Karamanis <viktor.karamanis@outlook.com>");
-MODULE_DESCRIPTION("Driver for ADS131E0x ADC family build:" __stringify(KBUILD_BUILD_TIMESTAMP));
+MODULE_DESCRIPTION("Driver for ADS131E0x ADC family build:" __stringify(
+	KBUILD_BUILD_TIMESTAMP));
 MODULE_LICENSE("GPL v2");
