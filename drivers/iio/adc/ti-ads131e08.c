@@ -42,6 +42,10 @@
 #define ADS131E08_ADR_CH0R 0x05
 
 /* Configuration register 1 */
+#define ADS131E08_CFG1R_BIT7_ONE BIT(7)
+#define ADS131E08_CFG1R_DAISY_IN BIT(6)
+#define ADS131E08_CFG1R_CLK_EN BIT(5)
+#define ADS131E08_CFG1R_BIT4_ONE BIT(4)
 #define ADS131E08_CFG1R_DR_MASK GENMASK(2, 0)
 
 /* Configuration register 3 */
@@ -301,14 +305,10 @@ static int ads131e08_set_data_rate(struct ads131e08_state *st, int data_rate)
 		dev_err(&st->spi->dev, "invalid data rate value\n");
 		return -EINVAL;
 	}
-
-	reg = ads131e08_read_reg(st, ADS131E08_ADR_CFG1R);
-	if (reg < 0)
-		return reg;
-
-	reg &= ~ADS131E08_CFG1R_DR_MASK;
-	reg |= FIELD_PREP(ADS131E08_CFG1R_DR_MASK,
-			  ads131e08_data_rate_tbl[i].reg);
+	reg = ADS131E08_CFG1R_BIT7_ONE | ADS131E08_CFG1R_BIT4_ONE |
+	      ADS131E08_CFG1R_CLK_EN |
+	      FIELD_PREP(ADS131E08_CFG1R_DR_MASK,
+			 ads131e08_data_rate_tbl[i].reg);
 
 	ret = ads131e08_write_reg(st, ADS131E08_ADR_CFG1R, reg);
 	if (ret)
