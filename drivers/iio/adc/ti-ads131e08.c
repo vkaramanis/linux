@@ -975,7 +975,14 @@ static int ads131e08_probe(struct spi_device *spi)
 		return ret;
 	}
 
-	return devm_iio_device_register(&spi->dev, indio_dev);
+	ret = devm_iio_device_register(&spi->dev, indio_dev);
+	if (ret) {
+		dev_err(&spi->dev, "device registration failed\n");
+		return ret;
+	}
+	
+	dev_info(&spi->dev, "ADS131E0X initialized successfully\n");
+	return 0
 }
 
 static const struct of_device_id ads131e08_of_match[] = {
