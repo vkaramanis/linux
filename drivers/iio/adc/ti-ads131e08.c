@@ -186,14 +186,14 @@ static int ads131e08_read_reg(struct ads131e08_state *st, u8 reg)
 	int ret;
 	struct spi_transfer transfer[] = {
 		{
-			.tx_buf = &st->tx_buf,
+			.tx_buf = st->tx_buf,
 			.len = 2,
 			.delay = {
 				.value = st->sdecode_delay_us,
 				.unit = SPI_DELAY_UNIT_USECS,
 			},
 		}, {
-			.rx_buf = &st->rx_buf,
+			.rx_buf = st->rx_buf,
 			.len = 1,
 		},
 	};
