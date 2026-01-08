@@ -738,7 +738,7 @@ static irqreturn_t ads131e08_interrupt(int irq, void *private)
 
 	if (iio_buffer_enabled(indio_dev)) {
 		atomic64_set(&st->last_ts, iio_get_time_ns(indio_dev));
-		iio_trigger_poll_chained(st->trig);
+		iio_trigger_poll_nested(st->trig);
 	} else
 		complete(&st->completion);
 
