@@ -186,19 +186,20 @@ static int ads131e08_read_reg(struct ads131e08_state *st, u8 reg)
 	int ret;
 	struct spi_transfer transfer[] = {
 		{
-			.tx_buf = st->tx_buf,
-			.rx_buf = st->rx_buf,
-			.len = 3,
+			.tx_buf = &st->tx_buf,
+			.len = 2,
 			.delay = {
 				.value = st->sdecode_delay_us,
 				.unit = SPI_DELAY_UNIT_USECS,
 			},
-		}
+		}, {
+			.rx_buf = &st->rx_buf,
+			.len = 1,
+		},
 	};
 
 	st->tx_buf[0] = ADS131E08_CMD_RREG(reg);
 	st->tx_buf[1] = 0;
-	st->tx_buf[2] = 0;
 
 	ret = spi_sync_transfer(st->spi, transfer, ARRAY_SIZE(transfer));
 	if (ret) {
@@ -206,16 +207,15 @@ static int ads131e08_read_reg(struct ads131e08_state *st, u8 reg)
 		return ret;
 	}
 
-	return st->rx_buf[2];
+	return st->rx_buf[0];
 }
-
 static int ads131e08_write_reg(struct ads131e08_state *st, u8 reg, u8 value)
 {
 	int ret;
 	struct spi_transfer transfer[] = {
 		{
 			.tx_buf = st->tx_buf,
-			.len = 4,
+			.len = 3,
 			.delay = {
 				.value = st->sdecode_delay_us,
 				.unit = SPI_DELAY_UNIT_USECS,
@@ -226,7 +226,6 @@ static int ads131e08_write_reg(struct ads131e08_state *st, u8 reg, u8 value)
 	st->tx_buf[0] = ADS131E08_CMD_WREG(reg);
 	st->tx_buf[1] = 0;
 	st->tx_buf[2] = value;
-	st->tx_buf[3] = 0;
 
 	ret = spi_sync_transfer(st->spi, transfer, ARRAY_SIZE(transfer));
 	if (ret)
@@ -1061,6 +1060,6 @@ module_spi_driver(ads131e08_driver);
 
 MODULE_AUTHOR("Tomislav Denis <tomislav.denis@avl.com>");
 MODULE_AUTHOR("Viktor Karamanis <viktor.karamanis@outlook.com>");
-MODULE_DESCRIPTION("Driver for ADS131E0x ADC family build:" __stringify(
-	KBUILD_BUILD_TIMESTAMP));
+MODULE_DESCRIPTION(
+	"Driver for ADS131E0x ADC family build: " KBUILD_BUILD_TIMESTAMP);
 MODULE_LICENSE("GPL v2");
