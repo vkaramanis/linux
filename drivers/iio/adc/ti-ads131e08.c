@@ -118,6 +118,12 @@ struct ads131e08_state {
 	struct spi_transfer xfer;
 	struct spi_message msg;
 	atomic64_t last_ts;
+
+	struct {
+		u64 last_time_ns;
+		u32 sample_count;
+		u32 sps; /* store last calculated SPS */
+	} bench;
 };
 
 static const struct ads131e08_info ads131e08_info_tbl[] = {
@@ -537,6 +543,14 @@ static int ads131e08_read_direct(struct iio_dev *indio_dev,
 	return 0;
 }
 
+static ssize_t sps_show(struct iio_dev *indio_dev,
+			struct iio_chan_spec const *chan, char *buf)
+{
+	struct ads131e08_state *st = iio_priv(indio_dev);
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n", st->bench.sps);
+}
+
 static int ads131e08_read_raw(struct iio_dev *indio_dev,
 			      struct iio_chan_spec const *channel, int *value,
 			      int *value2, long mask)
@@ -606,9 +620,11 @@ static int ads131e08_write_raw(struct iio_dev *indio_dev,
 }
 
 static IIO_CONST_ATTR_SAMP_FREQ_AVAIL("1 2 4 8 16 32 64");
+static IIO_DEVICE_ATTR(current_sps, S_IRUGO, sps_show, NULL, 0);
 
 static struct attribute *ads131e08_attributes[] = {
-	&iio_const_attr_sampling_frequency_available.dev_attr.attr, NULL
+	&iio_const_attr_sampling_frequency_available.dev_attr.attr,
+	&iio_dev_attr_current_sps.dev_attr.attr, NULL
 };
 
 static const struct attribute_group ads131e08_attribute_group = {
@@ -726,6 +742,22 @@ static irqreturn_t ads131e08_trigger_handler(int irq, void *private)
 
 	iio_push_to_buffers_with_timestamp(indio_dev, st->tmp_buf.data,
 					   atomic64_read(&st->last_ts));
+
+	u64 now = ktime_get_ns();
+	st->bench.sample_count++;
+
+	if (st->bench.last_time_ns) {
+		u64 delta_ns = now - st->bench.last_time_ns;
+
+		if (delta_ns >= NSEC_PER_SEC) { /* every 1 second */
+			st->bench.sps = st->bench.sample_count * NSEC_PER_SEC /
+					delta_ns;
+			st->bench.sample_count = 0;
+			st->bench.last_time_ns = now;
+		}
+	} else {
+		st->bench.last_time_ns = now;
+	}
 
 out:
 	iio_trigger_notify_done(indio_dev->trig);
@@ -877,6 +909,10 @@ static int ads131e08_probe(struct spi_device *spi)
 	st = iio_priv(indio_dev);
 	st->info = info;
 	st->spi = spi;
+
+	st->bench.last_time_ns = 0;
+	st->bench.sample_count = 0;
+	st->bench.sps = 0;
 
 	ret = ads131e08_alloc_channels(indio_dev);
 	if (ret)
