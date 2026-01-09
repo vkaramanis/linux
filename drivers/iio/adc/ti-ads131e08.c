@@ -65,8 +65,8 @@
 #define ADS131E08_VREF_2V4_mV 2400
 #define ADS131E08_VREF_4V_mV 4000
 
-#define ADS131E08_WAIT_RESET_CYCLES 18
-#define ADS131E08_WAIT_SDECODE_CYCLES 4
+#define ADS131E08_WAIT_RESET_CYCLES 20
+#define ADS131E08_WAIT_SDECODE_CYCLES 6
 #define ADS131E08_WAIT_OFFSETCAL_MS 153
 #define ADS131E08_MAX_SETTLING_TIME_MS 6
 
@@ -187,19 +187,19 @@ static int ads131e08_read_reg(struct ads131e08_state *st, u8 reg)
 	struct spi_transfer transfer[] = {
 		{
 			.tx_buf = st->tx_buf,
-			.len = 2,
+			.rx_buf = st->rx_buf,
+			.len = 3,
+			.cs_change = 0,
 			.delay = {
 				.value = st->sdecode_delay_us,
 				.unit = SPI_DELAY_UNIT_USECS,
 			},
-		}, {
-			.rx_buf = st->rx_buf,
-			.len = 1,
-		},
+		}
 	};
 
 	st->tx_buf[0] = ADS131E08_CMD_RREG(reg);
-	st->tx_buf[1] = 0;
+	st->tx_buf[1] = 0x00;
+	st->tx_buf[2] = 0x00;
 
 	ret = spi_sync_transfer(st->spi, transfer, ARRAY_SIZE(transfer));
 	if (ret) {
@@ -207,8 +207,9 @@ static int ads131e08_read_reg(struct ads131e08_state *st, u8 reg)
 		return ret;
 	}
 
-	return st->rx_buf[0];
+	return st->rx_buf[2];
 }
+
 static int ads131e08_write_reg(struct ads131e08_state *st, u8 reg, u8 value)
 {
 	int ret;
@@ -216,6 +217,7 @@ static int ads131e08_write_reg(struct ads131e08_state *st, u8 reg, u8 value)
 		{
 			.tx_buf = st->tx_buf,
 			.len = 3,
+			.cs_change = 0,
 			.delay = {
 				.value = st->sdecode_delay_us,
 				.unit = SPI_DELAY_UNIT_USECS,
@@ -255,6 +257,13 @@ static int ads131e08_read_data(struct ads131e08_state *st, int rx_len)
 		dev_err(&st->spi->dev, "Read data failed\n");
 
 	return ret;
+}
+
+static void ads131e08_update_transfer_length(struct ads131e08_state *st)
+{
+	st->xfer.len = st->readback_len;
+	spi_message_init(&st->msg);
+	spi_message_add_tail(&st->xfer, &st->msg);
 }
 
 static int ads131e08_check_status(struct ads131e08_state *st)
@@ -317,7 +326,8 @@ static int ads131e08_set_data_rate(struct ads131e08_state *st, int data_rate)
 	st->readback_len = ADS131E08_NUM_STATUS_BYTES +
 			   ADS131E08_NUM_DATA_BYTES(st->data_rate) *
 				   st->info->max_channels;
-	st->xfer.len = st->readback_len;
+
+	ads131e08_update_transfer_length(st);
 
 	reg = ads131e08_read_reg(st, ADS131E08_ADR_CFG1R);
 	if (reg >= 0)
@@ -898,8 +908,8 @@ static int ads131e08_probe(struct spi_device *spi)
 	const struct ads131e08_info *info;
 	struct ads131e08_state *st;
 	struct iio_dev *indio_dev;
-	unsigned long adc_clk_hz;
-	unsigned long adc_clk_ns;
+	unsigned long spi_clk_hz;
+	unsigned long spi_clk_ns;
 	int ret;
 
 	info = spi_get_device_match_data(spi);
@@ -917,6 +927,13 @@ static int ads131e08_probe(struct spi_device *spi)
 	st = iio_priv(indio_dev);
 	st->info = info;
 	st->spi = spi;
+	dev_info(&spi->dev, "max spi speed %d Hz\n", spi->max_speed_hz);
+
+	memset(st->tx_buf, 0, sizeof(st->tx_buf));
+	memset(st->rx_buf, 0, sizeof(st->rx_buf));
+	memset(&st->xfer, 0, sizeof(st->xfer));
+	st->xfer.rx_buf = st->rx_buf;
+	st->xfer.cs_change = 0;
 
 	st->bench.last_time_ns = 0;
 	st->bench.sample_count = 0;
@@ -995,24 +1012,19 @@ static int ads131e08_probe(struct spi_device *spi)
 		return dev_err_probe(&spi->dev, PTR_ERR(st->adc_clk),
 				     "failed to get the ADC clock\n");
 
-	adc_clk_hz = clk_get_rate(st->adc_clk);
-	if (!adc_clk_hz) {
-		dev_err(&spi->dev, "failed to get the ADC clock rate\n");
+	spi_clk_hz = spi->max_speed_hz;
+	if (!spi_clk_hz) {
+		dev_err(&spi->dev, "SPI clock speed not set\n");
 		return -EINVAL;
 	}
 
-	adc_clk_ns = NSEC_PER_SEC / adc_clk_hz;
-	st->sdecode_delay_us = DIV_ROUND_UP(
-		ADS131E08_WAIT_SDECODE_CYCLES * adc_clk_ns, NSEC_PER_USEC);
-	st->reset_delay_us = DIV_ROUND_UP(
-		ADS131E08_WAIT_RESET_CYCLES * adc_clk_ns, NSEC_PER_USEC);
+	spi_clk_ns = NSEC_PER_SEC / spi_clk_hz;
 
-	spi_message_init(&st->msg);
-	memset(&st->xfer, 0, sizeof(st->xfer));
-	st->xfer.rx_buf = st->rx_buf;
-	st->xfer.len = st->readback_len;
-	spi_message_add_tail(&st->xfer, &st->msg);
-	memset(st->tx_buf, 0x00, sizeof(st->tx_buf));
+	st->sdecode_delay_us = DIV_ROUND_UP(
+		ADS131E08_WAIT_SDECODE_CYCLES * spi_clk_ns, NSEC_PER_USEC);
+
+	st->reset_delay_us = DIV_ROUND_UP(
+		ADS131E08_WAIT_RESET_CYCLES * spi_clk_ns, NSEC_PER_USEC);
 
 	ret = ads131e08_initial_config(indio_dev);
 	if (ret) {
