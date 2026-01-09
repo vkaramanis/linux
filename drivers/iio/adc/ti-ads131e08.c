@@ -375,7 +375,7 @@ static int ads131e08_set_pga_gain(struct ads131e08_state *st,
 
 	ret = ads131e08_write_reg(st, ADS131E08_ADR_CH0R + channel, reg);
 	udelay(st->sdecode_delay_us);
-	return ret
+	return ret;
 }
 
 static int ads131e08_validate_channel_mux(struct ads131e08_state *st,
@@ -410,32 +410,31 @@ static int ads131e08_set_channel_mux(struct ads131e08_state *st,
 
 	ret = ads131e08_write_reg(st, ADS131E08_ADR_CH0R + channel, reg);
 	udelay(st->sdecode_delay_us);
-	return ret
+	return ret;
 }
 
 static int ads131e08_power_down_channel(struct ads131e08_state *st,
 					unsigned int channel, bool value)
 {
-	int reg, ret
+	int reg, ret;
 
-			 reg = ads131e08_read_reg(st,
-						  ADS131E08_ADR_CH0R + channel);
+	reg = ads131e08_read_reg(st, ADS131E08_ADR_CH0R + channel);
 	if (reg < 0)
 		return reg;
 
 	reg &= ~ADS131E08_CHR_PWD_MASK;
 	reg |= FIELD_PREP(ADS131E08_CHR_PWD_MASK, value);
 
-	ret ads131e08_write_reg(st, ADS131E08_ADR_CH0R + channel, reg);
+	ret = ads131e08_write_reg(st, ADS131E08_ADR_CH0R + channel, reg);
 	udelay(st->sdecode_delay_us);
-	return ret
+	return ret;
 }
 
 static int ads131e08_config_reference_voltage(struct ads131e08_state *st)
 {
-	int reg, ret
+	int reg, ret;
 
-			 reg = ads131e08_read_reg(st, ADS131E08_ADR_CFG3R);
+	reg = ads131e08_read_reg(st, ADS131E08_ADR_CFG3R);
 	if (reg < 0)
 		return reg;
 
@@ -447,9 +446,9 @@ static int ads131e08_config_reference_voltage(struct ads131e08_state *st)
 				  st->vref_mv == ADS131E08_VREF_4V_mV);
 	}
 
-	ret ads131e08_write_reg(st, ADS131E08_ADR_CFG3R, reg);
+	ret = ads131e08_write_reg(st, ADS131E08_ADR_CFG3R, reg);
 	udelay(st->sdecode_delay_us);
-	return ret
+	return ret;
 }
 
 static int ads131e08_initial_config(struct iio_dev *indio_dev)
@@ -672,9 +671,9 @@ static int ads131e08_debugfs_reg_access(struct iio_dev *indio_dev,
 		return ret;
 	}
 
-	ret ads131e08_write_reg(st, reg, writeval);
+	ret = ads131e08_write_reg(st, reg, writeval);
 	udelay(st->sdecode_delay_us);
-	return ret
+	return ret;
 }
 
 static const struct iio_info ads131e08_iio_info = {
@@ -940,7 +939,6 @@ static int ads131e08_probe(struct spi_device *spi)
 	st = iio_priv(indio_dev);
 	st->info = info;
 	st->spi = spi;
-	dev_info(&spi->dev, "max spi speed %d Hz\n", spi->max_speed_hz);
 
 	memset(st->tx_buf, 0, sizeof(st->tx_buf));
 	memset(st->rx_buf, 0, sizeof(st->rx_buf));
@@ -1039,10 +1037,6 @@ static int ads131e08_probe(struct spi_device *spi)
 	st->reset_delay_us = DIV_ROUND_UP(
 		ADS131E08_WAIT_RESET_CYCLES * spi_clk_ns, NSEC_PER_USEC);
 
-	dev_info(&spi->dev, "=== DELAY DEBUG ===\n");
-	dev_info(&spi->dev, "SPI speed: %lu Hz\n", spi->max_speed_hz);
-	dev_info(&spi->dev, "SPI period: %lu ns\n",
-		 NSEC_PER_SEC / spi->max_speed_hz);
 	dev_info(&st->spi->dev, "SDECODE delay: %u µs\n", st->sdecode_delay_us);
 	dev_info(&st->spi->dev, "RESET delay: %u µs\n", st->reset_delay_us);
 
