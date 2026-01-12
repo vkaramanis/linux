@@ -228,6 +228,7 @@ static int ads131e08_write_reg(struct ads131e08_state *st, u8 reg, u8 value)
 {
 	int ret;
 	u8 cmd0 = ADS131E08_CMD_WREG(reg);
+	u8 cmd1 = 0x00;
 	u8 cmd2 = value;
 
 	struct spi_transfer transfer[] = {
