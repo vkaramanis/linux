@@ -194,51 +194,63 @@ static int ads131e08_exec_cmd(struct ads131e08_state *st, u8 cmd,
 static int ads131e08_read_reg(struct ads131e08_state *st, u8 reg, u8 *val)
 {
 	int ret;
-	u8 tx[2] = { ADS131E08_CMD_RREG(reg), 0x00 };
+	u8 cmd0 = ADS131E08_CMD_RREG(reg);
+	u8 cmd1 = 0x00;
 	u8 rx;
 
 	struct spi_transfer transfer[] = {
-		{ .tx_buf = tx,
-		  .len = 2,
-		  .cs_change = 0,
-		  .delay = { .value = st->sdecode_delay_us,
-			     .unit = SPI_DELAY_UNIT_USECS } },
-		{ .rx_buf = &rx,
+		{ .tx_buf = &cmd0,
 		  .len = 1,
 		  .cs_change = 0,
 		  .delay = { .value = st->sdecode_delay_us,
-			     .unit = SPI_DELAY_UNIT_USECS } }
+			     .unit = SPI_DELAY_UNIT_USECS } },
+		{ .tx_buf = &cmd1,
+		  .len = 1,
+		  .cs_change = 0,
+		  .delay = { .value = st->sdecode_delay_us,
+			     .unit = SPI_DELAY_UNIT_USECS } },
+		{ .rx_buf = &rx, .len = 1, .cs_change = 0 }
 	};
 
-	ret = spi_sync_transfer(st->spi, transfer, 2);
+	ret = spi_sync_transfer(st->spi, transfer, 3);
 	if (ret) {
-		dev_err(&st->spi->dev, "Read reg 0x%02x failed: %d\n", tx[0],
+		dev_err(&st->spi->dev, "Read reg 0x%02x failed: %d\n", reg,
 			ret);
 		return ret;
 	}
 
 	*val = rx;
 	dev_info(&st->spi->dev, "READ 0x%02x: RX=%02x\n", reg, rx);
-
 	return 0;
 }
 
 static int ads131e08_write_reg(struct ads131e08_state *st, u8 reg, u8 value)
 {
 	int ret;
-	u8 tx[3] = { ADS131E08_CMD_WREG(reg), 0x00, value };
+	u8 cmd0 = ADS131E08_CMD_WREG(reg);
+	u8 cmd2 = value;
 
-	struct spi_transfer transfer = {
-		.tx_buf = tx,
-		.len = 3,
-		.cs_change = 0,
-		.delay = { .value = st->sdecode_delay_us,
-			   .unit = SPI_DELAY_UNIT_USECS }
+	struct spi_transfer transfer[] = {
+		{ .tx_buf = &cmd0,
+		  .len = 1,
+		  .cs_change = 0,
+		  .delay = { .value = st->sdecode_delay_us,
+			     .unit = SPI_DELAY_UNIT_USECS } },
+		{ .tx_buf = &cmd1,
+		  .len = 1,
+		  .cs_change = 0,
+		  .delay = { .value = st->sdecode_delay_us,
+			     .unit = SPI_DELAY_UNIT_USECS } },
+		{ .tx_buf = &cmd2,
+		  .len = 1,
+		  .cs_change = 0,
+		  .delay = { .value = st->sdecode_delay_us,
+			     .unit = SPI_DELAY_UNIT_USECS } }
 	};
 
-	ret = spi_sync_transfer(st->spi, &transfer, 1);
+	ret = spi_sync_transfer(st->spi, transfer, 3);
 	if (ret) {
-		dev_err(&st->spi->dev, "Write reg 0x%02x failed: %d\n", tx[0],
+		dev_err(&st->spi->dev, "Write reg 0x%02x failed: %d\n", reg,
 			ret);
 		return ret;
 	}
