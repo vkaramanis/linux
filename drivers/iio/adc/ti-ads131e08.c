@@ -174,14 +174,17 @@ static int ads131e08_exec_cmd(struct ads131e08_state *st, u8 cmd,
 	int ret;
 	u8 tx = cmd;
 
-	ret = spi_write(st->spi, &tx, 1);
+	struct spi_transfer transfer = { .tx_buf = &tx,
+					 .len = 1,
+					 .delay_usecs = delay_us };
+
+	ret = spi_sync_transfer(st->spi, &transfer, 1);
 	if (ret) {
 		dev_err(&st->spi->dev, "Exec cmd 0x%02x failed: %d\n", cmd,
 			ret);
 		return ret;
 	}
 
-	udelay(delay_us);
 	return 0;
 }
 
@@ -191,7 +194,12 @@ static int ads131e08_read_reg(struct ads131e08_state *st, u8 reg, u8 *val)
 	u8 tx[2] = { ADS131E08_CMD_RREG(reg), 0x00 };
 	u8 rx;
 
-	ret = spi_write_then_read(st->spi, tx, 2, &rx, 1);
+	struct spi_transfer transfer[] = {
+		{ .tx_buf = tx, .len = 2, .delay_usecs = st->sdecode_delay_us },
+		{ .rx_buf = &rx, .len = 1, .delay_usecs = st->sdecode_delay_us }
+	};
+
+	ret = spi_sync_transfer(st->spi, transfer, 2);
 	if (ret) {
 		dev_err(&st->spi->dev, "Read reg 0x%02x failed: %d\n", tx[0],
 			ret);
@@ -200,6 +208,7 @@ static int ads131e08_read_reg(struct ads131e08_state *st, u8 reg, u8 *val)
 
 	*val = rx;
 	dev_info(&st->spi->dev, "READ 0x%02x: RX=%02x\n", reg, rx);
+
 	return 0;
 }
 
@@ -208,13 +217,17 @@ static int ads131e08_write_reg(struct ads131e08_state *st, u8 reg, u8 value)
 	int ret;
 	u8 tx[3] = { ADS131E08_CMD_WREG(reg), 0x00, value };
 
-	ret = spi_write(st->spi, tx, 3);
+	struct spi_transfer transfer = { .tx_buf = tx,
+					 .len = 3,
+					 .delay_usecs = st->sdecode_delay_us };
+
+	ret = spi_sync_transfer(st->spi, &transfer, 1);
 	if (ret) {
 		dev_err(&st->spi->dev, "Write reg 0x%02x failed: %d\n", tx[0],
 			ret);
 		return ret;
 	}
-	udelay(st->sdecode_delay_us);
+
 	return 0;
 }
 
@@ -224,10 +237,9 @@ static int ads131e08_read_data(struct ads131e08_state *st)
 
 	u8 tx = ADS131E08_CMD_RDATA;
 
-	struct spi_transfer transfer[] = {
-		{ .tx_buf = &tx, .len = 1, .cs_change = 0 },
-		{ .rx_buf = st->rx_buf, .len = st->readback_len, .cs_change = 0 }
-	};
+	struct spi_transfer transfer[] = { { .tx_buf = &tx, .len = 1 },
+					   { .rx_buf = st->rx_buf,
+					     .len = st->readback_len } };
 
 	ret = spi_sync_transfer(st->spi, transfer, ARRAY_SIZE(transfer));
 	if (ret)
@@ -947,7 +959,6 @@ static int ads131e08_probe(struct spi_device *spi)
 	memset(st->rx_buf, 0, sizeof(st->rx_buf));
 	memset(&st->xfer, 0, sizeof(st->xfer));
 	st->xfer.rx_buf = st->rx_buf;
-	st->xfer.cs_change = 0;
 
 	st->bench.last_time_ns = 0;
 	st->bench.sample_count = 0;
