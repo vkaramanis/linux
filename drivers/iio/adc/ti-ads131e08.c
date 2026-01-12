@@ -168,97 +168,57 @@ static const struct ads131e08_pga_gain_desc ads131e08_pga_gain_tbl[] = {
 
 static const u8 ads131e08_valid_channel_mux_values[] = { 0, 1, 3, 4 };
 
-static int ads131e08_exec_cmd(struct ads131e08_state *st, u8 cmd)
+static int ads131e08_exec_cmd(struct ads131e08_state *st, u8 cmd,
+			      unsigned long delay_us)
 {
 	int ret;
-	
-	u8 tx[2] = { cmd, 0x00 };
-	u8 rx[2] = { 0x00 };
+	u8 tx = cmd;
 
-	struct spi_transfer transfer = {
-		.tx_buf = tx,
-		.rx_buf = rx,
-		.len = 2,
-		.cs_change = 0,
-		.delay = { .value = st->sdecode_delay_us,
-			   .unit = SPI_DELAY_UNIT_USECS }
-	};
+	ret = spi_write(st->spi, &tx, 1);
+	if (ret) {
+		dev_err(&st->spi->dev, "Exec cmd 0x%02x failed: %d\n", cmd,
+			ret);
+		return ret;
+	}
 
-	dev_dbg(&st->spi->dev, "Command reg 0x%02x: TX=%02x %02x\n", cmd, tx[0],
-		tx[1]);
-
-	ret = spi_sync_transfer(st->spi, &transfer, 1);
-	if (ret)
-		dev_err(&st->spi->dev, "Exec cmd(%02x) failed\n", cmd);
-
-	dev_info(&st->spi->dev, "READ 0x%02x: RX=%02x %02x -> 0x%02x\n", cmd,
-		 rx[0], rx[1], rx[1]);
-	udelay(st->sdecode_delay_us);
-
-	return ret;
+	udelay(delay_us);
+	return 0;
 }
 
 static int ads131e08_read_reg(struct ads131e08_state *st, u8 reg, u8 *val)
 {
 	int ret;
+	u8 tx[2] = { ADS131E08_CMD_RREG(reg), 0x00 };
+	u8 rx;
 
-	u8 tx[3] = { ADS131E08_CMD_RREG(reg), 0x00, 0x00 };
-	u8 rx[3] = { 0x00 };
-
-	struct spi_transfer transfer = {
-		.tx_buf = tx,
-		.rx_buf = rx,
-		.len = 3,
-		.cs_change = 0,
-		.delay = { .value = st->sdecode_delay_us,
-			   .unit = SPI_DELAY_UNIT_USECS }
-	};
-
-	dev_dbg(&st->spi->dev, "Reading reg 0x%02x: TX=%02x %02x %02x\n", reg,
-		tx[0], tx[1], tx[2]);
-
-	ret = spi_sync_transfer(st->spi, &transfer, 1);
+	ret = spi_write_then_read(st->spi, tx, 2, &rx, 1);
 	if (ret) {
-		dev_err(&st->spi->dev, "Read reg 0x%02x failed: %d\n", reg,
+		dev_err(&st->spi->dev, "Read reg 0x%02x failed: %d\n", tx[0],
 			ret);
 		return ret;
 	}
 
-	dev_info(&st->spi->dev, "READ 0x%02x: RX=%02x %02x %02x -> 0x%02x\n",
-		 reg, rx[0], rx[1], rx[2], rx[2]);
-
-	*val = rx[2];
+	*val = rx;
+	dev_info(&st->spi->dev, "READ 0x%02x: RX=%02x\n", reg, rx);
 	return 0;
 }
 
 static int ads131e08_write_reg(struct ads131e08_state *st, u8 reg, u8 value)
 {
 	int ret;
-
 	u8 tx[3] = { ADS131E08_CMD_WREG(reg), 0x00, value };
 
-	struct spi_transfer transfer = {
-		.tx_buf = tx,
-		.len = 3,
-		.cs_change = 0,
-		.delay = { .value = st->sdecode_delay_us,
-			   .unit = SPI_DELAY_UNIT_USECS }
-	};
-
-	dev_info(&st->spi->dev,
-		 "WRITE 0x%02x: TX=%02x %02x %02x (value=0x%02x)\n", reg, tx[0],
-		 tx[1], tx[2], value);
-
-	ret = spi_sync_transfer(st->spi, &transfer, 1);
-	if (ret)
-		dev_err(&st->spi->dev, "Write reg 0x%02x failed: %d\n", reg,
+	ret = spi_write(st->spi, tx, 3);
+	if (ret) {
+		dev_err(&st->spi->dev, "Write reg 0x%02x failed: %d\n", tx[0],
 			ret);
+		return ret;
+	}
 	udelay(st->sdecode_delay_us);
-
-	return ret;
+	return 0;
 }
 
-static int ads131e08_read_data(struct ads131e08_state *st, int rx_len)
+static int ads131e08_read_data(struct ads131e08_state *st)
 {
 	int ret;
 
@@ -266,13 +226,30 @@ static int ads131e08_read_data(struct ads131e08_state *st, int rx_len)
 
 	struct spi_transfer transfer[] = {
 		{ .tx_buf = &tx, .len = 1, .cs_change = 0 },
-		{ .rx_buf = st->rx_buf, .len = rx_len, .cs_change = 0 }
+		{ .rx_buf = st->rx_buf, .len = st->readback_len, .cs_change = 0 }
 	};
 
 	ret = spi_sync_transfer(st->spi, transfer, ARRAY_SIZE(transfer));
 	if (ret)
 		dev_err(&st->spi->dev, "Read data failed\n");
 
+	return ret;
+}
+
+static int ads131e08_stop_read_data_continuous(struct ads131e08_state *st)
+{
+	int ret;
+
+	ret = ads131e08_exec_cmd(st, ADS131E08_CMD_SDATAC,
+				 st->sdecode_delay_us);
+	if (ret)
+		goto out;
+
+	ret = spi_read(st->spi, st->rx_buf, st->readback_len);
+	if (ret)
+		goto out;
+
+out:
 	return ret;
 }
 
@@ -471,17 +448,15 @@ static int ads131e08_initial_config(struct iio_dev *indio_dev)
 	int ret, i;
 
 	/* Disable read data in continuous mode (enabled by default) */
-	ret = ads131e08_exec_cmd(st, ADS131E08_CMD_SDATAC);
+	ret = ads131e08_stop_read_data_continuous(st);
 	if (ret)
 		return ret;
 
-	ret = ads131e08_exec_cmd(st, ADS131E08_CMD_RESET);
+	ret = ads131e08_exec_cmd(st, ADS131E08_CMD_RESET, st->reset_delay_us);
 	if (ret)
 		return ret;
 
-	udelay(st->reset_delay_us);
-
-	ret = ads131e08_exec_cmd(st, ADS131E08_CMD_SDATAC);
+	ret = ads131e08_stop_read_data_continuous(st);
 	if (ret)
 		return ret;
 
@@ -516,7 +491,8 @@ static int ads131e08_initial_config(struct iio_dev *indio_dev)
 	}
 
 	/* Request channel offset calibration */
-	ret = ads131e08_exec_cmd(st, ADS131E08_CMD_OFFSETCAL);
+	ret = ads131e08_exec_cmd(st, ADS131E08_CMD_OFFSETCAL,
+				 st->sdecode_delay_us);
 	if (ret)
 		return ret;
 
@@ -527,13 +503,13 @@ static int ads131e08_initial_config(struct iio_dev *indio_dev)
 	 * time (e.g. first call of the ads131e08_read_direct method).
 	 * To avoid this problem offset calibration is triggered here.
 	 */
-	ret = ads131e08_exec_cmd(st, ADS131E08_CMD_START);
+	ret = ads131e08_exec_cmd(st, ADS131E08_CMD_START,
+				 st->sdecode_delay_us +
+					 ADS131E08_WAIT_OFFSETCAL_MS * 1000);
 	if (ret)
 		return ret;
 
-	msleep(ADS131E08_WAIT_OFFSETCAL_MS);
-
-	return ads131e08_exec_cmd(st, ADS131E08_CMD_STOP);
+	return ads131e08_exec_cmd(st, ADS131E08_CMD_STOP, st->sdecode_delay_us);
 }
 
 static int ads131e08_poll_data(struct ads131e08_state *st)
@@ -542,7 +518,7 @@ static int ads131e08_poll_data(struct ads131e08_state *st)
 
 	reinit_completion(&st->completion);
 
-	ret = ads131e08_exec_cmd(st, ADS131E08_CMD_START);
+	ret = ads131e08_exec_cmd(st, ADS131E08_CMD_START, st->sdecode_delay_us);
 	if (ret)
 		return ret;
 
@@ -552,7 +528,7 @@ static int ads131e08_poll_data(struct ads131e08_state *st)
 	if (!ret)
 		return -ETIMEDOUT;
 
-	ret = ads131e08_read_data(st, st->readback_len);
+	ret = ads131e08_read_data(st);
 	if (ret)
 		return ret;
 
@@ -560,7 +536,7 @@ static int ads131e08_poll_data(struct ads131e08_state *st)
 	if (ret)
 		return ret;
 
-	return ads131e08_exec_cmd(st, ADS131E08_CMD_STOP);
+	return ads131e08_exec_cmd(st, ADS131E08_CMD_STOP, st->sdecode_delay_us);
 }
 
 static int ads131e08_read_direct(struct iio_dev *indio_dev,
@@ -708,17 +684,20 @@ static int ads131e08_set_trigger_state(struct iio_trigger *trig, bool state)
 	int ret;
 
 	if (state) {
-		ret = ads131e08_exec_cmd(st, ADS131E08_CMD_RDATAC);
+		ret = ads131e08_exec_cmd(st, ADS131E08_CMD_RDATAC,
+					 st->sdecode_delay_us);
 		if (ret)
 			return ret;
 
-		ret = ads131e08_exec_cmd(st, ADS131E08_CMD_START);
+		ret = ads131e08_exec_cmd(st, ADS131E08_CMD_START,
+					 st->sdecode_delay_us);
 	} else {
-		ret = ads131e08_exec_cmd(st, ADS131E08_CMD_SDATAC);
+		ret = ads131e08_stop_read_data_continuous(st);
 		if (ret)
 			return ret;
 
-		ret = ads131e08_exec_cmd(st, ADS131E08_CMD_STOP);
+		ret = ads131e08_exec_cmd(st, ADS131E08_CMD_STOP,
+					 st->sdecode_delay_us);
 	}
 
 	return ret;
