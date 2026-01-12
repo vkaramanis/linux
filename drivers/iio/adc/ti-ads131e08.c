@@ -239,18 +239,26 @@ static int ads131e08_read_data(struct ads131e08_state *st)
 static int ads131e08_stop_read_data_continuous(struct ads131e08_state *st)
 {
 	int ret;
+	u8 nop = 0x00;
 
 	ret = ads131e08_exec_cmd(st, ADS131E08_CMD_SDATAC,
 				 st->sdecode_delay_us);
 	if (ret)
-		goto out;
+		return ret;
+
+	ret = spi_write(st->spi, &nop, 1);
+	if (ret)
+		return ret;
 
 	ret = spi_read(st->spi, st->rx_buf, st->readback_len);
 	if (ret)
-		goto out;
+		return ret;
 
-out:
-	return ret;
+	ret = spi_write(st->spi, &nop, 1);
+	if (ret)
+		return ret;
+
+	return 0;
 }
 
 static void ads131e08_update_transfer_length(struct ads131e08_state *st)
