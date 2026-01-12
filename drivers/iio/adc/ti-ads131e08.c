@@ -174,9 +174,11 @@ static int ads131e08_exec_cmd(struct ads131e08_state *st, u8 cmd,
 	int ret;
 	u8 tx = cmd;
 
-	struct spi_transfer transfer = { .tx_buf = &tx,
-					 .len = 1,
-					 .delay_usecs = delay_us };
+	struct spi_transfer transfer = {
+		.tx_buf = &tx,
+		.len = 1,
+		.delay = { .value = delay_us, .unit = SPI_DELAY_UNIT_USECS }
+	};
 
 	ret = spi_sync_transfer(st->spi, &transfer, 1);
 	if (ret) {
@@ -195,8 +197,14 @@ static int ads131e08_read_reg(struct ads131e08_state *st, u8 reg, u8 *val)
 	u8 rx;
 
 	struct spi_transfer transfer[] = {
-		{ .tx_buf = tx, .len = 2, .delay_usecs = st->sdecode_delay_us },
-		{ .rx_buf = &rx, .len = 1, .delay_usecs = st->sdecode_delay_us }
+		{ .tx_buf = tx,
+		  .len = 2,
+		  .delay = { .value = st->sdecode_delay_us,
+			     .unit = SPI_DELAY_UNIT_USECS } },
+		{ .rx_buf = &rx,
+		  .len = 1,
+		  .delay = { .value = st->sdecode_delay_us,
+			     .unit = SPI_DELAY_UNIT_USECS } }
 	};
 
 	ret = spi_sync_transfer(st->spi, transfer, 2);
@@ -217,9 +225,12 @@ static int ads131e08_write_reg(struct ads131e08_state *st, u8 reg, u8 value)
 	int ret;
 	u8 tx[3] = { ADS131E08_CMD_WREG(reg), 0x00, value };
 
-	struct spi_transfer transfer = { .tx_buf = tx,
-					 .len = 3,
-					 .delay_usecs = st->sdecode_delay_us };
+	struct spi_transfer transfer = {
+		.tx_buf = tx,
+		.len = 3,
+		.delay = { .value = st->sdecode_delay_us,
+			   .unit = SPI_DELAY_UNIT_USECS }
+	};
 
 	ret = spi_sync_transfer(st->spi, &transfer, 1);
 	if (ret) {
