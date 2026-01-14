@@ -435,7 +435,7 @@ static int ads131e08_set_channel_config(struct ads131e08_state *st,
 
 	/* Update gain */
 	reg &= ~ADS131E08_CHR_GAIN_MASK;
-	reg |= FIELD_PREP(ADS131E08_CHR_GAIN_MASK, field_value);
+	reg |= FIELD_PREP(ADS131E08_CHR_GAIN_MASK, gain);
 
 	/* Update mux */
 	reg &= ~ADS131E08_CHR_MUX_MASK;
