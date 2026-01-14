@@ -42,10 +42,6 @@
 #define ADS131E08_ADR_CH0R 0x05
 
 /* Configuration register 1 */
-#define ADS131E08_CFG1R_BIT7_ONE BIT(7)
-#define ADS131E08_CFG1R_DAISY_IN BIT(6)
-#define ADS131E08_CFG1R_CLK_EN BIT(5)
-#define ADS131E08_CFG1R_BIT4_ONE BIT(4)
 #define ADS131E08_CFG1R_DR_MASK GENMASK(2, 0)
 
 /* Configuration register 3 */
@@ -360,19 +356,20 @@ static int ads131e08_set_data_rate(struct ads131e08_state *st, int data_rate)
 		dev_err(&st->spi->dev, "invalid data rate value\n");
 		return -EINVAL;
 	}
-	reg = ADS131E08_CFG1R_BIT7_ONE | ADS131E08_CFG1R_BIT4_ONE |
-	      ADS131E08_CFG1R_CLK_EN |
-	      FIELD_PREP(ADS131E08_CFG1R_DR_MASK,
-			 ads131e08_data_rate_tbl[i].reg);
-
-	ret = ads131e08_write_reg(st, ADS131E08_ADR_CFG1R, reg);
-	if (ret)
-		return ret;
 
 	ret = ads131e08_read_reg(st, ADS131E08_ADR_CFG1R, &reg);
 	if (ret)
 		return ret;
 
+	reg &= ~ADS131E08_CFG1R_DR_MASK;
+	reg |= FIELD_PREP(ADS131E08_CFG1R_DR_MASK,
+			  ads131e08_data_rate_tbl[i].reg);
+
+	ret = ads131e08_write_reg(st, ADS131E08_ADR_CFG1R, reg);
+	if (ret)
+		return ret;
+
+	/* Update state */
 	st->data_rate = data_rate;
 	st->readback_len = ADS131E08_NUM_STATUS_BYTES +
 			   ADS131E08_NUM_DATA_BYTES(st->data_rate) *
@@ -400,26 +397,6 @@ static int ads131e08_pga_gain_to_field_value(struct ads131e08_state *st,
 	return ads131e08_pga_gain_tbl[i].reg;
 }
 
-static int ads131e08_set_pga_gain(struct ads131e08_state *st,
-				  unsigned int channel, unsigned int pga_gain)
-{
-	int field_value, ret;
-	u8 reg;
-
-	field_value = ads131e08_pga_gain_to_field_value(st, pga_gain);
-	if (field_value < 0)
-		return field_value;
-
-	ret = ads131e08_read_reg(st, ADS131E08_ADR_CH0R + channel, &reg);
-	if (ret)
-		return ret;
-
-	reg &= ~ADS131E08_CHR_GAIN_MASK;
-	reg |= FIELD_PREP(ADS131E08_CHR_GAIN_MASK, field_value);
-
-	return ads131e08_write_reg(st, ADS131E08_ADR_CH0R + channel, reg);
-}
-
 static int ads131e08_validate_channel_mux(struct ads131e08_state *st,
 					  unsigned int mux)
 {
@@ -438,34 +415,35 @@ static int ads131e08_validate_channel_mux(struct ads131e08_state *st,
 	return 0;
 }
 
-static int ads131e08_set_channel_mux(struct ads131e08_state *st,
-				     unsigned int channel, unsigned int mux)
+static int ads131e08_set_channel_config(struct ads131e08_state *st,
+					unsigned int channel,
+					unsigned int pga_gain, unsigned int mux,
+					bool power_down)
 {
-	int ret;
+	int gain, ret;
 	u8 reg;
 
+	/* Convert gain to register field */
+	gain = ads131e08_pga_gain_to_field_value(st, pga_gain);
+	if (gain < 0)
+		return gain;
+
+	/* Read current channel register */
 	ret = ads131e08_read_reg(st, ADS131E08_ADR_CH0R + channel, &reg);
 	if (ret)
 		return ret;
 
+	/* Update gain */
+	reg &= ~ADS131E08_CHR_GAIN_MASK;
+	reg |= FIELD_PREP(ADS131E08_CHR_GAIN_MASK, field_value);
+
+	/* Update mux */
 	reg &= ~ADS131E08_CHR_MUX_MASK;
 	reg |= FIELD_PREP(ADS131E08_CHR_MUX_MASK, mux);
 
-	return ads131e08_write_reg(st, ADS131E08_ADR_CH0R + channel, reg);
-}
-
-static int ads131e08_power_down_channel(struct ads131e08_state *st,
-					unsigned int channel, bool value)
-{
-	int ret;
-	u8 reg;
-
-	ret = ads131e08_read_reg(st, ADS131E08_ADR_CH0R + channel, &reg);
-	if (ret)
-		return ret;
-
+	/* Update power down */
 	reg &= ~ADS131E08_CHR_PWD_MASK;
-	reg |= FIELD_PREP(ADS131E08_CHR_PWD_MASK, value);
+	reg |= FIELD_PREP(ADS131E08_CHR_PWD_MASK, power_down);
 
 	return ads131e08_write_reg(st, ADS131E08_ADR_CH0R + channel, reg);
 }
@@ -519,13 +497,9 @@ static int ads131e08_initial_config(struct iio_dev *indio_dev)
 		return ret;
 
 	for (i = 0; i < indio_dev->num_channels; i++) {
-		ret = ads131e08_set_pga_gain(st, channel->channel,
-					     st->channel_config[i].pga_gain);
-		if (ret)
-			return ret;
-
-		ret = ads131e08_set_channel_mux(st, channel->channel,
-						st->channel_config[i].mux);
+		ret = ads131e08_set_channel_config(
+			st, channel->channel, st->channel_config[i].pga_gain,
+			st->channel_config[i].mux, false);
 		if (ret)
 			return ret;
 
@@ -535,7 +509,9 @@ static int ads131e08_initial_config(struct iio_dev *indio_dev)
 
 	/* Power down unused channels */
 	for_each_clear_bit(i, &active_channels, st->info->max_channels) {
-		ret = ads131e08_power_down_channel(st, i, true);
+		ret = ads131e08_set_channel_config(st, i,
+						   ADS131E08_DEFAULT_PGA_GAIN,
+						   ADS131E08_DEFAULT_MUX, true);
 		if (ret)
 			return ret;
 	}
