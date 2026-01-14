@@ -750,6 +750,11 @@ err:
 	return ret;
 }
 
+
+static const struct iio_trigger_ops ads131e08_trigger_ops = {
+	.validate_device = &iio_trigger_validate_own_device,
+};
+
 static int ads131e08_buffer_postdisable(struct iio_dev *indio_dev)
 {
 	struct ads131e08_state *st = iio_priv(indio_dev);
