@@ -750,7 +750,6 @@ err:
 	return ret;
 }
 
-
 static const struct iio_trigger_ops ads131e08_trigger_ops = {
 	.validate_device = &iio_trigger_validate_own_device,
 };
@@ -1018,6 +1017,8 @@ static int ads131e08_probe(struct spi_device *spi)
 	indio_dev->info = &ads131e08_iio_info;
 	indio_dev->modes = INDIO_DIRECT_MODE | INDIO_BUFFER_TRIGGERED;
 
+	init_completion(&st->completion);
+
 	if (spi->irq) {
 		ret = devm_request_threaded_irq(&spi->dev, spi->irq,
 						ads131e08_interrupt,
@@ -1096,9 +1097,6 @@ static int ads131e08_probe(struct spi_device *spi)
 
 	st->reset_delay_us = DIV_ROUND_UP(
 		ADS131E08_WAIT_RESET_CYCLES * adc_clk_ns, NSEC_PER_USEC);
-
-	dev_info(&st->spi->dev, "SDECODE delay: %u µs\n", st->sdecode_delay_us);
-	dev_info(&st->spi->dev, "RESET delay: %u µs\n", st->reset_delay_us);
 
 	ret = ads131e08_initial_config(indio_dev);
 	if (ret) {
