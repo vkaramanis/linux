@@ -105,6 +105,7 @@ struct ads131e08_state {
 	unsigned int reset_delay_us;
 	unsigned int readback_len;
 	struct completion completion;
+	bool rdatac_enabled;
 	struct {
 		u8 data[ADS131E08_NUM_DATA_BYTES_MAX] __aligned(
 			IIO_DMA_MINALIGN);
@@ -220,7 +221,7 @@ static int ads131e08_read_reg(struct ads131e08_state *st, u8 reg, u8 *val)
 	}
 
 	*val = rx;
-	dev_info(&st->spi->dev, "READ 0x%02x: RX=%02x\n", reg, rx);
+
 	return 0;
 }
 
@@ -255,6 +256,8 @@ static int ads131e08_write_reg(struct ads131e08_state *st, u8 reg, u8 value)
 			ret);
 		return ret;
 	}
+
+	dev_info(&st->spi->dev, "Written to 0x%02x: value=%02x\n", cmd0, cmd2);
 
 	return 0;
 }
@@ -319,8 +322,9 @@ static int ads131e08_check_status(struct ads131e08_state *st)
 
 	/* Header check (bits 23:20) should be 0b1100 */
 	if (((status >> 20) & 0xF) != 0xC) {
-		dev_err(&st->spi->dev, "Status word header invalid: 0x%06x\n",
-			status);
+		dev_err_ratelimited(&st->spi->dev,
+				    "Status word header invalid: 0x%06x\n",
+				    status);
 		ret = -EIO;
 	}
 
@@ -374,9 +378,6 @@ static int ads131e08_set_data_rate(struct ads131e08_state *st, int data_rate)
 			   ADS131E08_NUM_DATA_BYTES(st->data_rate) *
 				   st->info->max_channels;
 	ads131e08_update_transfer_length(st);
-
-	dev_info(&st->spi->dev, "data rate set to %u ksps (CFG1R=0x%02x)\n",
-		 st->data_rate, reg);
 
 	return 0;
 }
@@ -726,47 +727,58 @@ static const struct iio_info ads131e08_iio_info = {
 	.debugfs_reg_access = &ads131e08_debugfs_reg_access,
 };
 
-static int ads131e08_set_trigger_state(struct iio_trigger *trig, bool state)
+static int ads131e08_buffer_preenable(struct iio_dev *indio_dev)
 {
-	struct iio_dev *indio_dev = iio_trigger_get_drvdata(trig);
 	struct ads131e08_state *st = iio_priv(indio_dev);
 	int ret;
 
-	if (state) {
-		ret = ads131e08_exec_cmd(st, ADS131E08_CMD_RDATAC,
-					 st->sdecode_delay_us);
-		if (ret)
-			return ret;
+	st->rdatac_enabled = true;
 
-		ret = ads131e08_exec_cmd(st, ADS131E08_CMD_START,
-					 st->sdecode_delay_us);
-	} else {
-		ret = ads131e08_stop_read_data_continuous(st);
-		if (ret)
-			return ret;
+	ret = ads131e08_exec_cmd(st, ADS131E08_CMD_RDATAC,
+				 st->sdecode_delay_us);
+	if (ret)
+		goto err;
 
-		ret = ads131e08_exec_cmd(st, ADS131E08_CMD_STOP,
-					 st->sdecode_delay_us);
-	}
+	ret = ads131e08_exec_cmd(st, ADS131E08_CMD_START, st->sdecode_delay_us);
+	if (ret)
+		goto err;
 
+	enable_irq(st->spi->irq);
+	return 0;
+err:
+	st->rdatac_enabled = false;
 	return ret;
 }
 
-static const struct iio_trigger_ops ads131e08_trigger_ops = {
-	.set_trigger_state = &ads131e08_set_trigger_state,
-	.validate_device = &iio_trigger_validate_own_device,
+static int ads131e08_buffer_postdisable(struct iio_dev *indio_dev)
+{
+	struct ads131e08_state *st = iio_priv(indio_dev);
+
+	disable_irq(st->spi->irq);
+
+	st->rdatac_enabled = false;
+
+	ads131e08_stop_read_data_continuous(st);
+	ads131e08_exec_cmd(st, ADS131E08_CMD_STOP, st->sdecode_delay_us);
+
+	return 0;
+}
+static const struct iio_buffer_setup_ops ads131e08_buffer_ops = {
+	.preenable = ads131e08_buffer_preenable,
+	.postdisable = ads131e08_buffer_postdisable,
 };
 
 static irqreturn_t ads131e08_trigger_handler(int irq, void *private)
 {
-	struct iio_poll_func *pf = private;
-	struct iio_dev *indio_dev = pf->indio_dev;
+	struct iio_dev *indio_dev = private;
 	struct ads131e08_state *st = iio_priv(indio_dev);
 	unsigned int chn, i = 0;
 	u8 *src, *dest;
 	unsigned int num_bytes;
 	u8 tweak_offset;
-	int ret;
+
+	if (!st->rdatac_enabled)
+		return IRQ_HANDLED;
 	/*
 	 * The number of data bits per channel depends on the data rate.
 	 * For 32 and 64 ksps data rates, number of data bits per channel
@@ -774,17 +786,18 @@ static irqreturn_t ads131e08_trigger_handler(int irq, void *private)
 	 * type (be:s24/32>>8). So we use a little tweak to pack properly
 	 * 16 bits of data into the buffer.
 	 */
+
 	num_bytes = ADS131E08_NUM_DATA_BYTES(st->data_rate);
 	tweak_offset = num_bytes == 2 ? 1 : 0;
+	atomic64_set(&st->last_ts, iio_get_time_ns(indio_dev));
 
 	if (spi_sync(st->spi, &st->msg)) {
-		dev_warn(&st->spi->dev, "continuous data read failed\n");
-		goto out;
+		dev_warn(&st->spi->dev, "SPI read in thread failed\n");
+		return IRQ_HANDLED;
 	}
 
-	ret = ads131e08_check_status(st);
-	if (ret)
-		goto out;
+	if (ads131e08_check_status(st))
+		return IRQ_HANDLED;
 
 	iio_for_each_active_channel(indio_dev, chn)
 	{
@@ -835,8 +848,6 @@ static irqreturn_t ads131e08_trigger_handler(int irq, void *private)
 		st->bench.last_time_ns = now;
 	}
 
-out:
-	iio_trigger_notify_done(indio_dev->trig);
 	return IRQ_HANDLED;
 }
 
@@ -845,13 +856,12 @@ static irqreturn_t ads131e08_interrupt(int irq, void *private)
 	struct iio_dev *indio_dev = private;
 	struct ads131e08_state *st = iio_priv(indio_dev);
 
-	if (iio_buffer_enabled(indio_dev)) {
-		atomic64_set(&st->last_ts, iio_get_time_ns(indio_dev));
-		iio_trigger_poll_nested(st->trig);
-	} else
+	if (!st->rdatac_enabled) {
 		complete(&st->completion);
+		return IRQ_HANDLED;
+	}
 
-	return IRQ_HANDLED;
+	return IRQ_WAKE_THREAD;
 }
 
 static int ads131e08_alloc_channels(struct iio_dev *indio_dev)
@@ -965,8 +975,8 @@ static int ads131e08_probe(struct spi_device *spi)
 	const struct ads131e08_info *info;
 	struct ads131e08_state *st;
 	struct iio_dev *indio_dev;
-	unsigned long spi_clk_hz;
-	unsigned long spi_clk_ns;
+	unsigned long adc_clk_hz;
+	unsigned long adc_clk_ns;
 	int ret;
 
 	info = spi_get_device_match_data(spi);
@@ -985,11 +995,12 @@ static int ads131e08_probe(struct spi_device *spi)
 	st->info = info;
 	st->spi = spi;
 
+	st->rdatac_enabled = false;
+
 	memset(st->rx_buf, 0, sizeof(st->rx_buf));
 	memset(&st->xfer, 0, sizeof(st->xfer));
 	st->xfer.rx_buf = st->rx_buf;
 	st->xfer.cs_change = 0;
-
 	st->bench.last_time_ns = 0;
 	st->bench.sample_count = 0;
 	st->bench.sps = 0;
@@ -1002,12 +1013,12 @@ static int ads131e08_probe(struct spi_device *spi)
 	indio_dev->info = &ads131e08_iio_info;
 	indio_dev->modes = INDIO_DIRECT_MODE | INDIO_BUFFER_TRIGGERED;
 
-	init_completion(&st->completion);
-
 	if (spi->irq) {
-		ret = devm_request_irq(&spi->dev, spi->irq, ads131e08_interrupt,
-				       IRQF_TRIGGER_FALLING,
-				       spi->dev.driver->name, indio_dev);
+		ret = devm_request_threaded_irq(&spi->dev, spi->irq,
+						ads131e08_interrupt,
+						ads131e08_trigger_handler,
+						IRQF_TRIGGER_FALLING,
+						dev_name(&spi->dev), indio_dev);
 		if (ret)
 			return dev_err_probe(&spi->dev, ret,
 					     "request irq failed\n");
@@ -1035,8 +1046,8 @@ static int ads131e08_probe(struct spi_device *spi)
 
 	indio_dev->trig = iio_trigger_get(st->trig);
 
-	ret = devm_iio_triggered_buffer_setup(&spi->dev, indio_dev, NULL,
-					      &ads131e08_trigger_handler, NULL);
+	ret = devm_iio_triggered_buffer_setup(&spi->dev, indio_dev, NULL, NULL,
+					      &ads131e08_buffer_ops);
 	if (ret) {
 		dev_err(&spi->dev, "failed to setup IIO buffer\n");
 		return ret;
@@ -1067,19 +1078,19 @@ static int ads131e08_probe(struct spi_device *spi)
 		return dev_err_probe(&spi->dev, PTR_ERR(st->adc_clk),
 				     "failed to get the ADC clock\n");
 
-	spi_clk_hz = spi->max_speed_hz;
-	if (!spi_clk_hz) {
-		dev_err(&spi->dev, "SPI clock speed not set\n");
+	adc_clk_hz = clk_get_rate(st->adc_clk);
+	if (!adc_clk_hz) {
+		dev_err(&spi->dev, "ADC clock speed not set\n");
 		return -EINVAL;
 	}
 
-	spi_clk_ns = NSEC_PER_SEC / spi_clk_hz;
+	adc_clk_ns = NSEC_PER_SEC / adc_clk_hz;
 
 	st->sdecode_delay_us = DIV_ROUND_UP(
-		ADS131E08_WAIT_SDECODE_CYCLES * spi_clk_ns, NSEC_PER_USEC);
+		ADS131E08_WAIT_SDECODE_CYCLES * adc_clk_ns, NSEC_PER_USEC);
 
 	st->reset_delay_us = DIV_ROUND_UP(
-		ADS131E08_WAIT_RESET_CYCLES * spi_clk_ns, NSEC_PER_USEC);
+		ADS131E08_WAIT_RESET_CYCLES * adc_clk_ns, NSEC_PER_USEC);
 
 	dev_info(&st->spi->dev, "SDECODE delay: %u µs\n", st->sdecode_delay_us);
 	dev_info(&st->spi->dev, "RESET delay: %u µs\n", st->reset_delay_us);
