@@ -185,6 +185,7 @@ static int ads131e08_exec_cmd(struct ads131e08_state *st, u8 cmd,
 		return ret;
 	}
 
+	dev_info(&st->spi->dev, "Exec cmd 0x%02x\n", cmd);
 	return 0;
 }
 
@@ -708,22 +709,17 @@ static int ads131e08_buffer_preenable(struct iio_dev *indio_dev)
 	struct ads131e08_state *st = iio_priv(indio_dev);
 	int ret;
 
-	st->rdatac_enabled = true;
-
 	ret = ads131e08_exec_cmd(st, ADS131E08_CMD_RDATAC,
 				 st->sdecode_delay_us);
 	if (ret)
-		goto err;
+		return ret;
 
 	ret = ads131e08_exec_cmd(st, ADS131E08_CMD_START, st->sdecode_delay_us);
 	if (ret)
-		goto err;
+		return ret;
 
-	enable_irq(st->spi->irq);
+	st->rdatac_enabled = true;
 	return 0;
-err:
-	st->rdatac_enabled = false;
-	return ret;
 }
 
 static const struct iio_trigger_ops ads131e08_trigger_ops = {
@@ -733,14 +729,17 @@ static const struct iio_trigger_ops ads131e08_trigger_ops = {
 static int ads131e08_buffer_postdisable(struct iio_dev *indio_dev)
 {
 	struct ads131e08_state *st = iio_priv(indio_dev);
+	int ret;
 
-	disable_irq(st->spi->irq);
+	ret = ads131e08_stop_read_data_continuous(st);
+	if (ret)
+		return ret;
+
+	ret = ads131e08_exec_cmd(st, ADS131E08_CMD_STOP, st->sdecode_delay_us);
+	if (ret)
+		return ret;
 
 	st->rdatac_enabled = false;
-
-	ads131e08_stop_read_data_continuous(st);
-	ads131e08_exec_cmd(st, ADS131E08_CMD_STOP, st->sdecode_delay_us);
-
 	return 0;
 }
 static const struct iio_buffer_setup_ops ads131e08_buffer_ops = {
