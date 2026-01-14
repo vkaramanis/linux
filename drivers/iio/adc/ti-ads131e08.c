@@ -843,6 +843,13 @@ static irqreturn_t ads131e08_interrupt(int irq, void *private)
 	return IRQ_WAKE_THREAD;
 }
 
+static irqreturn_t ads131e08_dummy_poll(struct iio_poll_func *pf)
+{
+	/* nothing to do, all work is done in IRQ thread */
+	iio_push_to_buffers_done(pf->indio_dev, pf);
+	return IRQ_HANDLED;
+}
+
 static int ads131e08_alloc_channels(struct iio_dev *indio_dev)
 {
 	struct ads131e08_state *st = iio_priv(indio_dev);
@@ -928,7 +935,7 @@ static int ads131e08_alloc_channels(struct iio_dev *indio_dev)
 			BIT(IIO_CHAN_INFO_SAMP_FREQ);
 		channels[i].scan_index = i;
 		channels[i].scan_type.sign = 's';
-		channels[i].scan_type.realbits = 24;
+		channels[i].scan_type.realbits = ADS131E08_NUM_DATA_BYTES_MAX;
 		channels[i].scan_type.storagebits = 32;
 		channels[i].scan_type.shift = 8;
 		channels[i].scan_type.endianness = IIO_BE;
@@ -1027,7 +1034,8 @@ static int ads131e08_probe(struct spi_device *spi)
 
 	indio_dev->trig = iio_trigger_get(st->trig);
 
-	ret = devm_iio_triggered_buffer_setup(&spi->dev, indio_dev, NULL, NULL,
+	ret = devm_iio_triggered_buffer_setup(&spi->dev, indio_dev,
+					      ads131e08_dummy_poll, NULL,
 					      &ads131e08_buffer_ops);
 	if (ret) {
 		dev_err(&spi->dev, "failed to setup IIO buffer\n");
