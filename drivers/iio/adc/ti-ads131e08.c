@@ -16,9 +16,7 @@
 #include <linux/iio/buffer.h>
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
-#include <linux/iio/trigger.h>
-#include <linux/iio/trigger_consumer.h>
-#include <linux/iio/triggered_buffer.h>
+#include <linux/iio/buffer-dmaengine.h>
 
 #include <linux/regulator/consumer.h>
 #include <linux/spi/spi.h>
@@ -91,38 +89,26 @@ struct ads131e08_channel_config {
 struct ads131e08_state {
 	const struct ads131e08_info *info;
 	struct spi_device *spi;
-	struct iio_trigger *trig;
 	struct clk *adc_clk;
-	struct regulator *vref_reg;
-	struct ads131e08_channel_config *channel_config;
-	unsigned int data_rate;
-	unsigned int vref_mv;
+	struct completion completion;
 	unsigned int sdecode_delay_us;
 	unsigned int reset_delay_us;
-	unsigned int readback_len;
-	struct completion completion;
+	struct regulator *vref_reg;
+	unsigned int vref_mv;
+	struct ads131e08_channel_config *channel_config;
+	u8 data_rate;
+	u8 readback_len;
 	bool rdatac_enabled;
-	struct {
-		u8 data[ADS131E08_NUM_DATA_BYTES_MAX] __aligned(
-			IIO_DMA_MINALIGN);
-		s64 ts __aligned(8);
-	} tmp_buf;
+	struct spi_transfer xfer;
+	struct spi_message msg;
 	/*
 	 * Add extra one padding byte to be able to access the last channel
 	 * value using u32 pointer
 	 */
 	u8 rx_buf[ADS131E08_NUM_STATUS_BYTES + ADS131E08_NUM_DATA_BYTES_MAX +
 		  1] __aligned(IIO_DMA_MINALIGN);
-
-	struct spi_transfer xfer;
-	struct spi_message msg;
-	atomic64_t last_ts;
-
-	struct {
-		u64 last_time_ns;
-		u32 sample_count;
-		u32 sps; /* store last calculated SPS */
-	} bench;
+	u8 *channel_ptrs[8];
+	u32 data[8] __aligned(IIO_DMA_MINALIGN);
 };
 
 static const struct ads131e08_info ads131e08_info_tbl[] = {
@@ -343,8 +329,9 @@ static int ads131e08_check_status(struct ads131e08_state *st)
 	return ret;
 }
 
-static int ads131e08_set_data_rate(struct ads131e08_state *st, int data_rate)
+static int ads131e08_set_data_rate(struct iio_dev *indio_dev, int data_rate)
 {
+	struct ads131e08_state *st = iio_priv(indio_dev);
 	int i, ret;
 	u8 reg;
 
@@ -375,6 +362,16 @@ static int ads131e08_set_data_rate(struct ads131e08_state *st, int data_rate)
 	st->readback_len = ADS131E08_NUM_STATUS_BYTES +
 			   ADS131E08_NUM_DATA_BYTES(st->data_rate) *
 				   st->info->max_channels;
+
+	i = 0;
+	iio_for_each_active_channel(indio_dev, chn)
+	{
+		st->channel_ptrs[i] =
+			st->rx_buf + ADS131E08_NUM_STATUS_BYTES +
+			chn * ADS131E08_NUM_DATA_BYTES(st->data_rate);
+
+		i++;
+	}
 	ads131e08_update_transfer_length(st);
 
 	return 0;
@@ -489,7 +486,7 @@ static int ads131e08_initial_config(struct iio_dev *indio_dev)
 	if (ret)
 		return ret;
 
-	ret = ads131e08_set_data_rate(st, ADS131E08_DEFAULT_DATA_RATE);
+	ret = ads131e08_set_data_rate(indio_dev, ADS131E08_DEFAULT_DATA_RATE);
 	if (ret)
 		return ret;
 
@@ -588,15 +585,6 @@ static int ads131e08_read_direct(struct iio_dev *indio_dev,
 	return 0;
 }
 
-static ssize_t sps_show(struct device *dev, struct device_attribute *attr,
-			char *buf)
-{
-	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
-	struct ads131e08_state *st = iio_priv(indio_dev);
-
-	return scnprintf(buf, PAGE_SIZE, "%u\n", st->bench.sps);
-}
-
 static int ads131e08_read_raw(struct iio_dev *indio_dev,
 			      struct iio_chan_spec const *channel, int *value,
 			      int *value2, long mask)
@@ -656,7 +644,7 @@ static int ads131e08_write_raw(struct iio_dev *indio_dev,
 		if (ret)
 			return ret;
 
-		ret = ads131e08_set_data_rate(st, value);
+		ret = ads131e08_set_data_rate(indio_dev, value);
 		iio_device_release_direct_mode(indio_dev);
 		return ret;
 
@@ -666,11 +654,9 @@ static int ads131e08_write_raw(struct iio_dev *indio_dev,
 }
 
 static IIO_CONST_ATTR_SAMP_FREQ_AVAIL("1 2 4 8 16 32 64");
-static IIO_DEVICE_ATTR(current_sps, S_IRUGO, sps_show, NULL, 0);
 
 static struct attribute *ads131e08_attributes[] = {
-	&iio_const_attr_sampling_frequency_available.dev_attr.attr,
-	&iio_dev_attr_current_sps.dev_attr.attr, NULL
+	&iio_const_attr_sampling_frequency_available.dev_attr.attr, NULL
 };
 
 static const struct attribute_group ads131e08_attribute_group = {
@@ -684,6 +670,10 @@ static int ads131e08_debugfs_reg_access(struct iio_dev *indio_dev,
 	struct ads131e08_state *st = iio_priv(indio_dev);
 	int ret;
 
+	ret = iio_device_claim_direct_mode(indio_dev);
+	if (ret)
+		return ret;
+
 	if (readval) {
 		u8 reg_value;
 		ret = ads131e08_read_reg(st, reg, &reg_value);
@@ -694,6 +684,8 @@ static int ads131e08_debugfs_reg_access(struct iio_dev *indio_dev,
 	}
 
 	ret = ads131e08_write_reg(st, reg, writeval);
+	iio_device_release_direct_mode(indio_dev);
+
 	return ret;
 }
 
@@ -722,10 +714,6 @@ static int ads131e08_buffer_preenable(struct iio_dev *indio_dev)
 	return 0;
 }
 
-static const struct iio_trigger_ops ads131e08_trigger_ops = {
-	.validate_device = &iio_trigger_validate_own_device,
-};
-
 static int ads131e08_buffer_postdisable(struct iio_dev *indio_dev)
 {
 	struct ads131e08_state *st = iio_priv(indio_dev);
@@ -742,93 +730,11 @@ static int ads131e08_buffer_postdisable(struct iio_dev *indio_dev)
 	st->rdatac_enabled = false;
 	return 0;
 }
+
 static const struct iio_buffer_setup_ops ads131e08_buffer_ops = {
 	.preenable = ads131e08_buffer_preenable,
-	.postdisable = ads131e08_buffer_postdisable,
+	.postdisable = ads131e08_buffer_postdisable
 };
-
-static irqreturn_t ads131e08_trigger_handler(int irq, void *private)
-{
-	struct iio_dev *indio_dev = private;
-	struct ads131e08_state *st = iio_priv(indio_dev);
-	unsigned int chn, i = 0;
-	u8 *src, *dest;
-	unsigned int num_bytes;
-	u8 tweak_offset;
-
-	if (!st->rdatac_enabled)
-		return IRQ_HANDLED;
-	/*
-	 * The number of data bits per channel depends on the data rate.
-	 * For 32 and 64 ksps data rates, number of data bits per channel
-	 * is 16. This case is not compliant with used (fixed) scan element
-	 * type (be:s24/32>>8). So we use a little tweak to pack properly
-	 * 16 bits of data into the buffer.
-	 */
-
-	num_bytes = ADS131E08_NUM_DATA_BYTES(st->data_rate);
-	tweak_offset = num_bytes == 2 ? 1 : 0;
-	atomic64_set(&st->last_ts, iio_get_time_ns(indio_dev));
-
-	if (spi_sync(st->spi, &st->msg)) {
-		dev_warn(&st->spi->dev, "SPI read in thread failed\n");
-		return IRQ_HANDLED;
-	}
-
-	if (ads131e08_check_status(st))
-		return IRQ_HANDLED;
-
-	iio_for_each_active_channel(indio_dev, chn)
-	{
-		src = st->rx_buf + ADS131E08_NUM_STATUS_BYTES + chn * num_bytes;
-		dest = st->tmp_buf.data + i * ADS131E08_NUM_STORAGE_BYTES;
-
-		/*
-		 * Tweak offset is 0:
-		 * +---+---+---+---+
-		 * |D0 |D1 |D2 | X | (3 data bytes)
-		 * +---+---+---+---+
-		 *  a+0 a+1 a+2 a+3
-		 *
-		 * Tweak offset is 1:
-		 * +---+---+---+---+
-		 * |P0 |D0 |D1 | X | (one padding byte and 2 data bytes)
-		 * +---+---+---+---+
-		 *  a+0 a+1 a+2 a+3
-		 */
-		memcpy(dest + tweak_offset, src, num_bytes);
-
-		/*
-		 * Data conversion from 16 bits of data to 24 bits of data
-		 * is done by sign extension (properly filling padding byte).
-		 */
-		if (tweak_offset)
-			*dest = *src & BIT(7) ? 0xff : 0x00;
-
-		i++;
-	}
-
-	iio_push_to_buffers_with_timestamp(indio_dev, st->tmp_buf.data,
-					   atomic64_read(&st->last_ts));
-
-	u64 now = ktime_get_ns();
-	st->bench.sample_count++;
-
-	if (st->bench.last_time_ns) {
-		u64 delta_ns = now - st->bench.last_time_ns;
-
-		if (delta_ns >= NSEC_PER_SEC) { /* every 1 second */
-			st->bench.sps = st->bench.sample_count * NSEC_PER_SEC /
-					delta_ns;
-			st->bench.sample_count = 0;
-			st->bench.last_time_ns = now;
-		}
-	} else {
-		st->bench.last_time_ns = now;
-	}
-
-	return IRQ_HANDLED;
-}
 
 static irqreturn_t ads131e08_interrupt(int irq, void *private)
 {
@@ -843,10 +749,43 @@ static irqreturn_t ads131e08_interrupt(int irq, void *private)
 	return IRQ_WAKE_THREAD;
 }
 
-static irqreturn_t ads131e08_dummy_poll(struct iio_poll_func *pf)
+static irqreturn_t ads131e08_data_ready_thread(int irq, void *private)
 {
-	/* nothing to do, all work is done in IRQ thread */
-	iio_push_to_buffers_done(pf->indio_dev, pf);
+	struct iio_dev *indio_dev = private;
+	struct ads131e08_state *st = iio_priv(indio_dev);
+	u8 chn, i = 0;
+	u8 *src;
+	u32 *data = st->data;
+
+	if (!st->rdatac_enabled)
+		return IRQ_HANDLED;
+
+	if (spi_sync(st->spi, &st->msg)) {
+		dev_warn(&st->spi->dev, "SPI read in thread failed\n");
+		return IRQ_HANDLED;
+	}
+
+	if (ads131e08_check_status(st))
+		return IRQ_HANDLED;
+
+	if (st->data_rate < 32) {
+		for (i = 0; i < indio_dev->num_channels; i++) {
+			src = st->channel_ptrs[i];
+			*data++ = ((u32)src[0] << 24) | ((u32)src[1] << 16) |
+				  ((u32)src[2] << 8);
+		}
+	} else {
+		for (i = 0; i < indio_dev->num_channels; i++) {
+			src = st->channel_ptrs[i];
+			u8 sign = src[0] & BIT(7) ? 0xff : 0x00;
+			*data++ = ((u32)sign << 24) | ((u32)src[0] << 16) |
+				  ((u32)src[1] << 8);
+		}
+	}
+
+	iio_push_to_buffers_with_timestamp(indio_dev, (u8 *)st->data,
+					   iio_get_time_ns(indio_dev));
+
 	return IRQ_HANDLED;
 }
 
@@ -937,7 +876,7 @@ static int ads131e08_alloc_channels(struct iio_dev *indio_dev)
 		channels[i].scan_type.sign = 's';
 		channels[i].scan_type.realbits = ADS131E08_NUM_DATA_BYTES_MAX;
 		channels[i].scan_type.storagebits = 32;
-		channels[i].scan_type.shift = 8;
+		channels[i].scan_type.shift = 0;
 		channels[i].scan_type.endianness = IIO_BE;
 		i++;
 	}
@@ -959,8 +898,8 @@ static void ads131e08_regulator_disable(void *data)
 static int ads131e08_probe(struct spi_device *spi)
 {
 	const struct ads131e08_info *info;
-	struct ads131e08_state *st;
 	struct iio_dev *indio_dev;
+	struct ads131e08_state *st;
 	unsigned long adc_clk_hz;
 	unsigned long adc_clk_ns;
 	int ret;
@@ -983,13 +922,12 @@ static int ads131e08_probe(struct spi_device *spi)
 
 	st->rdatac_enabled = false;
 
+	indio_dev->modes = INDIO_DIRECT_MODE | INDIO_BUFFER_HARDWARE;
+	init_completion(&st->completion);
 	memset(st->rx_buf, 0, sizeof(st->rx_buf));
 	memset(&st->xfer, 0, sizeof(st->xfer));
 	st->xfer.rx_buf = st->rx_buf;
 	st->xfer.cs_change = 0;
-	st->bench.last_time_ns = 0;
-	st->bench.sample_count = 0;
-	st->bench.sps = 0;
 
 	ret = ads131e08_alloc_channels(indio_dev);
 	if (ret)
@@ -997,49 +935,37 @@ static int ads131e08_probe(struct spi_device *spi)
 
 	indio_dev->name = st->info->name;
 	indio_dev->info = &ads131e08_iio_info;
-	indio_dev->modes = INDIO_DIRECT_MODE | INDIO_BUFFER_TRIGGERED;
 
-	init_completion(&st->completion);
+	ret = devm_iio_dmaengine_buffer_setup(&spi->dev, indio_dev, "rx");
+	if (ret) {
+		dev_info(&spi->dev, "DMA buffer not available, using kfifo\n");
+
+		struct iio_buffer *buffer = iio_kfifo_allocate();
+		if (!buffer)
+			return -ENOMEM;
+
+		iio_device_attach_buffer(indio_dev, buffer);
+
+		devm_add_action_or_reset(
+			&spi->dev, (void (*)(void *))iio_buffer_free, buffer);
+	} else {
+		dev_info(&spi->dev, "DMA buffer enabled for zero-copy\n");
+	}
+
+	indio_dev->setup_ops = &ads131e08_buffer_ops;
 
 	if (spi->irq) {
-		ret = devm_request_threaded_irq(&spi->dev, spi->irq,
-						ads131e08_interrupt,
-						ads131e08_trigger_handler,
-						IRQF_TRIGGER_FALLING,
-						dev_name(&spi->dev), indio_dev);
+		ret = devm_request_threaded_irq(
+			&spi->dev, spi->irq, ads131e08_interrupt,
+			ads131e08_data_ready_thread,
+			IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
+			dev_name(&spi->dev), indio_dev);
 		if (ret)
 			return dev_err_probe(&spi->dev, ret,
 					     "request irq failed\n");
 	} else {
 		dev_err(&spi->dev, "data ready IRQ missing\n");
 		return -ENODEV;
-	}
-
-	st->trig = devm_iio_trigger_alloc(&spi->dev, "%s-dev%d",
-					  indio_dev->name,
-					  iio_device_id(indio_dev));
-	if (!st->trig) {
-		dev_err(&spi->dev, "failed to allocate IIO trigger\n");
-		return -ENOMEM;
-	}
-
-	st->trig->ops = &ads131e08_trigger_ops;
-	st->trig->dev.parent = &spi->dev;
-	iio_trigger_set_drvdata(st->trig, indio_dev);
-	ret = devm_iio_trigger_register(&spi->dev, st->trig);
-	if (ret) {
-		dev_err(&spi->dev, "failed to register IIO trigger\n");
-		return -ENOMEM;
-	}
-
-	indio_dev->trig = iio_trigger_get(st->trig);
-
-	ret = devm_iio_triggered_buffer_setup(&spi->dev, indio_dev,
-					      ads131e08_dummy_poll, NULL,
-					      &ads131e08_buffer_ops);
-	if (ret) {
-		dev_err(&spi->dev, "failed to setup IIO buffer\n");
-		return ret;
 	}
 
 	st->vref_reg = devm_regulator_get_optional(&spi->dev, "vref");
