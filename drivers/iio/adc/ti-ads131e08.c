@@ -322,10 +322,9 @@ static int ads131e08_check_status(struct ads131e08_state *st)
 	return ret;
 }
 
-static int ads131e08_set_data_rate(struct iio_dev *indio_dev, int data_rate)
+static int ads131e08_set_data_rate(struct ads131e08_state *st, int data_rate)
 {
-	struct ads131e08_state *st = iio_priv(indio_dev);
-	int chn = 0, i, ret;
+	int i, ret;
 	u8 reg;
 
 	for (i = 0; i < ARRAY_SIZE(ads131e08_data_rate_tbl); i++) {
@@ -358,17 +357,6 @@ static int ads131e08_set_data_rate(struct iio_dev *indio_dev, int data_rate)
 	st->xfer.len = st->readback_len;
 	spi_message_init(&st->msg);
 	spi_message_add_tail(&st->xfer, &st->msg);
-
-	i = 0;
-	iio_for_each_active_channel(indio_dev, chn)
-	{
-		dev_info(&st->spi->dev, "idx %d channel %d\n", i, chn);
-		st->channel_ptrs[i] =
-			st->rx_buf + ADS131E08_NUM_STATUS_BYTES +
-			chn * ADS131E08_NUM_DATA_BYTES(st->data_rate);
-
-		i++;
-	}
 
 	return 0;
 }
@@ -482,7 +470,7 @@ static int ads131e08_initial_config(struct iio_dev *indio_dev)
 	if (ret)
 		return ret;
 
-	ret = ads131e08_set_data_rate(indio_dev, ADS131E08_DEFAULT_DATA_RATE);
+	ret = ads131e08_set_data_rate(st, ADS131E08_DEFAULT_DATA_RATE);
 	if (ret)
 		return ret;
 
@@ -639,7 +627,7 @@ static int ads131e08_write_raw(struct iio_dev *indio_dev,
 		if (ret)
 			return ret;
 
-		ret = ads131e08_set_data_rate(indio_dev, value);
+		ret = ads131e08_set_data_rate(st, value);
 		iio_device_release_direct_mode(indio_dev);
 		return ret;
 
@@ -694,8 +682,17 @@ static const struct iio_info ads131e08_iio_info = {
 static int ads131e08_buffer_preenable(struct iio_dev *indio_dev)
 {
 	struct ads131e08_state *st = iio_priv(indio_dev);
-	int ret;
+	int ret, i = 0;
 
+	iio_for_each_active_channel(indio_dev, chn)
+	{
+		dev_info(&st->spi->dev, "idx %d channel %d\n", i, chn);
+		st->channel_ptrs[i] =
+			st->rx_buf + ADS131E08_NUM_STATUS_BYTES +
+			chn * ADS131E08_NUM_DATA_BYTES(st->data_rate);
+
+		i++;
+	}
 	ret = ads131e08_exec_cmd(st, ADS131E08_CMD_RDATAC,
 				 st->sdecode_delay_us);
 	if (ret)
@@ -723,6 +720,10 @@ static int ads131e08_buffer_postdisable(struct iio_dev *indio_dev)
 		return ret;
 
 	st->rdatac_enabled = false;
+
+	for (i = 0; i < indio_dev->num_channels; i++) {
+		st->channel_ptrs[i] = NULL;
+	}
 	return 0;
 }
 
@@ -923,6 +924,10 @@ static int ads131e08_probe(struct spi_device *spi)
 	memset(&st->xfer, 0, sizeof(st->xfer));
 	st->xfer.rx_buf = st->rx_buf;
 	st->xfer.cs_change = 0;
+
+	for (i = 0; i < ARRAY_SIZE(st->channel_ptrs); i++) {
+		st->channel_ptrs[i] = NULL;
+	}
 
 	ret = ads131e08_alloc_channels(indio_dev);
 	if (ret)
