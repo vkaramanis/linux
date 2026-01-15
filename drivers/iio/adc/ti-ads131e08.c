@@ -768,15 +768,15 @@ static irqreturn_t ads131e08_data_ready_thread(int irq, void *private)
 	if (st->data_rate < 32) {
 		for (i = 0; i < indio_dev->num_channels; i++) {
 			src = st->channel_ptrs[i];
-			*data++ = ((u32)src[0] << 24) | ((u32)src[1] << 16) |
-				  ((u32)src[2] << 8);
+			*data++ = ((u32)src[0] << 16) | ((u32)src[1] << 8) |
+				  src[2];
 		}
 	} else {
 		for (i = 0; i < indio_dev->num_channels; i++) {
 			src = st->channel_ptrs[i];
 			u8 sign = src[0] & BIT(7) ? 0xff : 0x00;
-			*data++ = ((u32)sign << 24) | ((u32)src[0] << 16) |
-				  ((u32)src[1] << 8);
+			*data++ = ((u32)sign << 16) | ((u32)src[0] << 8) |
+				  src[1];
 		}
 	}
 
