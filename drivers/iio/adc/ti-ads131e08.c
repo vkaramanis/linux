@@ -15,7 +15,6 @@
 
 #include <linux/iio/buffer.h>
 #include <linux/iio/kfifo_buf.h>
-#include <linux/iio/buffer-dmaengine.h>
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
 
@@ -936,18 +935,12 @@ static int ads131e08_probe(struct spi_device *spi)
 	indio_dev->name = st->info->name;
 	indio_dev->info = &ads131e08_iio_info;
 
-	ret = devm_iio_dmaengine_buffer_setup(&spi->dev, indio_dev, "rx");
+	ret = devm_iio_kfifo_buffer_setup(&spi->dev, indio_dev,
+					  &ads131e08_buffer_ops);
 	if (ret) {
-		dev_info(&spi->dev, "DMA buffer not available, using kfifo\n");
-
-		ret = devm_iio_kfifo_buffer_setup(&spi->dev, indio_dev);
-		if (ret)
-			return ret;
-	} else {
-		dev_info(&spi->dev, "DMA buffer enabled for zero-copy\n");
+		dev_err(&spi->dev, "failed to setup kfifo buffer\n");
+		return ret;
 	}
-
-	indio_dev->setup_ops = &ads131e08_buffer_ops;
 
 	if (spi->irq) {
 		ret = devm_request_threaded_irq(
