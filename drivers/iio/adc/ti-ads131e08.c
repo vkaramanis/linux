@@ -619,6 +619,7 @@ static int ads131e08_write_raw(struct iio_dev *indio_dev,
 			       struct iio_chan_spec const *channel, int value,
 			       int value2, long mask)
 {
+	struct ads131e08_state *st = iio_priv(indio_dev);
 	int ret;
 
 	switch (mask) {
@@ -682,7 +683,7 @@ static const struct iio_info ads131e08_iio_info = {
 static int ads131e08_buffer_preenable(struct iio_dev *indio_dev)
 {
 	struct ads131e08_state *st = iio_priv(indio_dev);
-	int ret, i = 0;
+	int ret, chn, i = 0;
 
 	iio_for_each_active_channel(indio_dev, chn)
 	{
