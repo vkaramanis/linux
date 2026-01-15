@@ -780,7 +780,7 @@ static irqreturn_t ads131e08_data_ready_thread(int irq, void *private)
 		}
 	}
 
-	iio_push_to_buffers_with_timestamp(indio_dev, (u8 *)st->data,
+	iio_push_to_buffers_with_timestamp(indio_dev, st->data,
 					   iio_get_time_ns(indio_dev));
 
 	return IRQ_HANDLED;
