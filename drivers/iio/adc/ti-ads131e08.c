@@ -288,13 +288,6 @@ static int ads131e08_stop_read_data_continuous(struct ads131e08_state *st)
 	return 0;
 }
 
-static void ads131e08_update_transfer_length(struct ads131e08_state *st)
-{
-	st->xfer.len = st->readback_len;
-	spi_message_init(&st->msg);
-	spi_message_add_tail(&st->xfer, &st->msg);
-}
-
 static int ads131e08_check_status(struct ads131e08_state *st)
 {
 	u8 *buf = st->rx_buf;
@@ -362,6 +355,9 @@ static int ads131e08_set_data_rate(struct iio_dev *indio_dev, int data_rate)
 	st->readback_len = ADS131E08_NUM_STATUS_BYTES +
 			   ADS131E08_NUM_DATA_BYTES(st->data_rate) *
 				   st->info->max_channels;
+	st->xfer.len = st->readback_len;
+	spi_message_init(&st->msg);
+	spi_message_add_tail(&st->xfer, &st->msg);
 
 	i = 0;
 	iio_for_each_active_channel(indio_dev, chn)
@@ -372,7 +368,6 @@ static int ads131e08_set_data_rate(struct iio_dev *indio_dev, int data_rate)
 
 		i++;
 	}
-	ads131e08_update_transfer_length(st);
 
 	return 0;
 }
