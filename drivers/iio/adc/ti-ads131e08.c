@@ -14,9 +14,10 @@
 #include <linux/module.h>
 
 #include <linux/iio/buffer.h>
+#include <linux/iio/kfifo_buf.h>
+#include <linux/iio/buffer-dmaengine.h>
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
-#include <linux/iio/buffer-dmaengine.h>
 
 #include <linux/regulator/consumer.h>
 #include <linux/spi/spi.h>
@@ -332,7 +333,7 @@ static int ads131e08_check_status(struct ads131e08_state *st)
 static int ads131e08_set_data_rate(struct iio_dev *indio_dev, int data_rate)
 {
 	struct ads131e08_state *st = iio_priv(indio_dev);
-	int i, ret;
+	int chn = 0, i, ret;
 	u8 reg;
 
 	for (i = 0; i < ARRAY_SIZE(ads131e08_data_rate_tbl); i++) {
@@ -635,7 +636,6 @@ static int ads131e08_write_raw(struct iio_dev *indio_dev,
 			       struct iio_chan_spec const *channel, int value,
 			       int value2, long mask)
 {
-	struct ads131e08_state *st = iio_priv(indio_dev);
 	int ret;
 
 	switch (mask) {
@@ -753,7 +753,7 @@ static irqreturn_t ads131e08_data_ready_thread(int irq, void *private)
 {
 	struct iio_dev *indio_dev = private;
 	struct ads131e08_state *st = iio_priv(indio_dev);
-	u8 chn, i = 0;
+	int i;
 	u8 *src;
 	u32 *data = st->data;
 
@@ -769,7 +769,7 @@ static irqreturn_t ads131e08_data_ready_thread(int irq, void *private)
 		return IRQ_HANDLED;
 
 	if (st->data_rate < 32) {
-		for (i = 0; i < indio_dev->num_channels; i++) {
+		for (int = 0; i < indio_dev->num_channels; i++) {
 			src = st->channel_ptrs[i];
 			*data++ = ((u32)src[0] << 24) | ((u32)src[1] << 16) |
 				  ((u32)src[2] << 8);
@@ -940,14 +940,9 @@ static int ads131e08_probe(struct spi_device *spi)
 	if (ret) {
 		dev_info(&spi->dev, "DMA buffer not available, using kfifo\n");
 
-		struct iio_buffer *buffer = iio_kfifo_allocate();
-		if (!buffer)
-			return -ENOMEM;
-
-		iio_device_attach_buffer(indio_dev, buffer);
-
-		devm_add_action_or_reset(
-			&spi->dev, (void (*)(void *))iio_buffer_free, buffer);
+		ret = devm_iio_kfifo_buffer_setup(&spi->dev, indio_dev);
+		if (ret)
+			return ret;
 	} else {
 		dev_info(&spi->dev, "DMA buffer enabled for zero-copy\n");
 	}
