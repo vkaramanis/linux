@@ -362,6 +362,7 @@ static int ads131e08_set_data_rate(struct iio_dev *indio_dev, int data_rate)
 	i = 0;
 	iio_for_each_active_channel(indio_dev, chn)
 	{
+		dev_info(&st->spi->dev, "idx %d channel %d\n", i, chn);
 		st->channel_ptrs[i] =
 			st->rx_buf + ADS131E08_NUM_STATUS_BYTES +
 			chn * ADS131E08_NUM_DATA_BYTES(st->data_rate);
