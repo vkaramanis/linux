@@ -64,6 +64,7 @@
 #define ADS131E08_WAIT_OFFSETCAL_MS 200
 #define ADS131E08_MAX_SETTLING_TIME_MS 6
 
+#define ADS131E08_NUM_OF_CHANNELS_MAX 8
 #define ADS131E08_NUM_STATUS_BYTES 3
 #define ADS131E08_NUM_DATA_BYTES_MAX 24
 #define ADS131E08_NUM_DATA_BYTES(dr) (((dr) >= 32) ? 2 : 3)
@@ -683,7 +684,7 @@ static const struct iio_info ads131e08_iio_info = {
 static int ads131e08_buffer_preenable(struct iio_dev *indio_dev)
 {
 	struct ads131e08_state *st = iio_priv(indio_dev);
-	int ret, chn, i = 0;
+	int ret;
 
 	ret = ads131e08_exec_cmd(st, ADS131E08_CMD_RDATAC,
 				 st->sdecode_delay_us);
@@ -701,7 +702,7 @@ static int ads131e08_buffer_preenable(struct iio_dev *indio_dev)
 static int ads131e08_buffer_postdisable(struct iio_dev *indio_dev)
 {
 	struct ads131e08_state *st = iio_priv(indio_dev);
-	int i, ret;
+	int ret;
 
 	ret = ads131e08_stop_read_data_continuous(st);
 	if (ret)
@@ -739,7 +740,8 @@ static irqreturn_t ads131e08_data_ready_thread(int irq, void *private)
 	struct iio_dev *indio_dev = private;
 	struct ads131e08_state *st = iio_priv(indio_dev);
 	u8 *src, *dest;
-	u8 chn, i = 0;
+	u8 i = 0, chn, num_bytes;
+
 	bool tweek_offset;
 
 	if (!st->rdatac_enabled)
@@ -912,7 +914,7 @@ static int ads131e08_probe(struct spi_device *spi)
 	struct ads131e08_state *st;
 	unsigned long adc_clk_hz;
 	unsigned long adc_clk_ns;
-	int i, ret;
+	int ret;
 
 	info = spi_get_device_match_data(spi);
 	if (!info) {
