@@ -107,8 +107,8 @@ struct ads131e08_state {
 	 */
 	u8 rx_buf[ADS131E08_NUM_STATUS_BYTES + ADS131E08_NUM_DATA_BYTES_MAX +
 		  1] __aligned(IIO_DMA_MINALIGN);
-	u8 *channel_ptrs[8];
-	u32 data[8] __aligned(IIO_DMA_MINALIGN);
+	u8 data[ADS131E08_NUM_OF_CHANNELS_MAX *
+		ADS131E08_NUM_STORAGE_BYTES] __aligned(IIO_DMA_MINALIGN);
 };
 
 static const struct ads131e08_info ads131e08_info_tbl[] = {
@@ -685,15 +685,6 @@ static int ads131e08_buffer_preenable(struct iio_dev *indio_dev)
 	struct ads131e08_state *st = iio_priv(indio_dev);
 	int ret, chn, i = 0;
 
-	iio_for_each_active_channel(indio_dev, chn)
-	{
-		dev_info(&st->spi->dev, "idx %d channel %d\n", i, chn);
-		st->channel_ptrs[i] =
-			st->rx_buf + ADS131E08_NUM_STATUS_BYTES +
-			chn * ADS131E08_NUM_DATA_BYTES(st->data_rate);
-
-		i++;
-	}
 	ret = ads131e08_exec_cmd(st, ADS131E08_CMD_RDATAC,
 				 st->sdecode_delay_us);
 	if (ret)
@@ -722,9 +713,6 @@ static int ads131e08_buffer_postdisable(struct iio_dev *indio_dev)
 
 	st->rdatac_enabled = false;
 
-	for (i = 0; i < indio_dev->num_channels; i++) {
-		st->channel_ptrs[i] = NULL;
-	}
 	return 0;
 }
 
@@ -750,12 +738,22 @@ static irqreturn_t ads131e08_data_ready_thread(int irq, void *private)
 {
 	struct iio_dev *indio_dev = private;
 	struct ads131e08_state *st = iio_priv(indio_dev);
-	int i;
-	u8 *src;
-	u32 *data = st->data;
+	u8 *src, *dest;
+	u8 chn, i = 0;
+	bool tweek_offset;
 
 	if (!st->rdatac_enabled)
 		return IRQ_HANDLED;
+
+	/*
+	 * The number of data bits per channel depends on the data rate.
+	 * For 32 and 64 ksps data rates, number of data bits per channel
+	 * is 16. This case is not compliant with used (fixed) scan element
+	 * type (be:s24/32>>8). So we use a little tweak to pack properly
+	 * 16 bits of data into the buffer.
+	 */
+	num_bytes = ADS131E08_NUM_DATA_BYTES(st->data_rate);
+	tweek_offset = (num_bytes == 2);
 
 	if (spi_sync(st->spi, &st->msg)) {
 		dev_warn(&st->spi->dev, "SPI read in thread failed\n");
@@ -765,19 +763,34 @@ static irqreturn_t ads131e08_data_ready_thread(int irq, void *private)
 	if (ads131e08_check_status(st))
 		return IRQ_HANDLED;
 
-	if (st->data_rate < 32) {
-		for (i = 0; i < indio_dev->num_channels; i++) {
-			src = st->channel_ptrs[i];
-			*data++ = ((u32)src[0] << 16) | ((u32)src[1] << 8) |
-				  src[2];
-		}
-	} else {
-		for (i = 0; i < indio_dev->num_channels; i++) {
-			src = st->channel_ptrs[i];
-			u8 sign = src[0] & BIT(7) ? 0xff : 0x00;
-			*data++ = ((u32)sign << 16) | ((u32)src[0] << 8) |
-				  src[1];
-		}
+	iio_for_each_active_channel(indio_dev, chn)
+	{
+		src = st->rx_buf + ADS131E08_NUM_STATUS_BYTES + chn * num_bytes;
+		dest = st->data + i * ADS131E08_NUM_STORAGE_BYTES;
+
+		/*
+		 * Tweek offset is 0:
+		 * +---+---+---+---+
+		 * |D0 |D1 |D2 | X | (3 data bytes)
+		 * +---+---+---+---+
+		 *  a+0 a+1 a+2 a+3
+		 *
+		 * Tweek offset is 1:
+		 * +---+---+---+---+
+		 * |P0 |D0 |D1 | X | (one padding byte and 2 data bytes)
+		 * +---+---+---+---+
+		 *  a+0 a+1 a+2 a+3
+		 */
+		memcpy(dest + tweek_offset, src, num_bytes);
+
+		/*
+		 * Data conversion from 16 bits of data to 24 bits of data
+		 * is done by sign extension (properly filling padding byte).
+		 */
+		if (tweek_offset)
+			*dest = *src & BIT(7) ? 0xff : 0x00;
+
+		i++;
 	}
 
 	iio_push_to_buffers_with_timestamp(indio_dev, st->data,
@@ -869,11 +882,11 @@ static int ads131e08_alloc_channels(struct iio_dev *indio_dev)
 						 BIT(IIO_CHAN_INFO_SCALE);
 		channels[i].info_mask_shared_by_type =
 			BIT(IIO_CHAN_INFO_SAMP_FREQ);
-		channels[i].scan_index = i;
+		channels[i].scan_index = channel;
 		channels[i].scan_type.sign = 's';
-		channels[i].scan_type.realbits = ADS131E08_NUM_DATA_BYTES_MAX;
+		channels[i].scan_type.realbits = 24;
 		channels[i].scan_type.storagebits = 32;
-		channels[i].scan_type.shift = 0;
+		channels[i].scan_type.shift = 8;
 		channels[i].scan_type.endianness = IIO_BE;
 		i++;
 	}
@@ -925,10 +938,6 @@ static int ads131e08_probe(struct spi_device *spi)
 	memset(&st->xfer, 0, sizeof(st->xfer));
 	st->xfer.rx_buf = st->rx_buf;
 	st->xfer.cs_change = 0;
-
-	for (i = 0; i < ARRAY_SIZE(st->channel_ptrs); i++) {
-		st->channel_ptrs[i] = NULL;
-	}
 
 	ret = ads131e08_alloc_channels(indio_dev);
 	if (ret)
