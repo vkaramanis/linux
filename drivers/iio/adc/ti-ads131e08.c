@@ -358,9 +358,6 @@ static int ads131e08_set_data_rate(struct ads131e08_state *st, int data_rate)
 	st->readback_len = ADS131E08_NUM_STATUS_BYTES +
 			   ADS131E08_NUM_DATA_BYTES(st->data_rate) *
 				   st->info->max_channels;
-	st->xfer.len = st->readback_len;
-	spi_message_init(&st->msg);
-	spi_message_add_tail(&st->xfer, &st->msg);
 
 	return 0;
 }
@@ -689,6 +686,13 @@ static int ads131e08_buffer_preenable(struct iio_dev *indio_dev)
 	struct ads131e08_state *st = iio_priv(indio_dev);
 	int ret;
 
+	memset(&st->xfer, 0, sizeof(st->xfer));
+	st->xfer.rx_buf = st->rx_buf;
+	st->xfer.len = st->readback_len;
+	st->xfer.cs_change = 0;
+	spi_message_init(&st->msg);
+	spi_message_add_tail(&st->xfer, &st->msg);
+
 	ret = ads131e08_exec_cmd(st, ADS131E08_CMD_RDATAC,
 				 st->sdecode_delay_us);
 	if (ret)
@@ -732,7 +736,6 @@ static irqreturn_t ads131e08_trigger_handler(int irq, void *private)
 	struct ads131e08_state *st = iio_priv(indio_dev);
 	unsigned int chn, i = 0;
 	u8 *src, *dest;
-	int ret;
 	/*
 	 * The number of data bits per channel depends on the data rate.
 	 * For 32 and 64 ksps data rates, number of data bits per channel
@@ -752,7 +755,7 @@ static irqreturn_t ads131e08_trigger_handler(int irq, void *private)
 	}
 
 	if (ads131e08_check_status(st))
-		memset(st->data, 0, sizeof(st->data));
+		goto out;
 
 	iio_for_each_active_channel(indio_dev, chn)
 	{
@@ -936,6 +939,8 @@ static int ads131e08_probe(struct spi_device *spi)
 	st = iio_priv(indio_dev);
 	st->info = info;
 	st->spi = spi;
+	st->rdatac_enabled = false;
+	memset(st->rx_buf, 0, sizeof(st->rx_buf));
 
 	ret = ads131e08_alloc_channels(indio_dev);
 	if (ret)
