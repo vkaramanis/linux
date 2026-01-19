@@ -14,9 +14,11 @@
 #include <linux/module.h>
 
 #include <linux/iio/buffer.h>
-#include <linux/iio/kfifo_buf.h>
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
+#include <linux/iio/trigger.h>
+#include <linux/iio/trigger_consumer.h>
+#include <linux/iio/triggered_buffer.h>
 
 #include <linux/regulator/consumer.h>
 #include <linux/spi/spi.h>
@@ -52,7 +54,7 @@
 #define ADS131E08_CHR_PWD_MASK BIT(7)
 
 /* ADC  misc */
-#define ADS131E08_DEFAULT_DATA_RATE 32
+#define ADS131E08_DEFAULT_DATA_RATE 1
 #define ADS131E08_DEFAULT_PGA_GAIN 1
 #define ADS131E08_DEFAULT_MUX 0
 
@@ -90,6 +92,7 @@ struct ads131e08_channel_config {
 struct ads131e08_state {
 	const struct ads131e08_info *info;
 	struct spi_device *spi;
+	struct iio_trigger *trig;
 	struct clk *adc_clk;
 	struct completion completion;
 	unsigned int sdecode_delay_us;
@@ -662,15 +665,15 @@ static int ads131e08_debugfs_reg_access(struct iio_dev *indio_dev,
 	if (readval) {
 		u8 reg_value;
 		ret = ads131e08_read_reg(st, reg, &reg_value);
-		if (ret)
-			return ret;
 		*readval = reg_value;
-		return 0;
+		goto out;
 	}
 
 	ret = ads131e08_write_reg(st, reg, writeval);
 	iio_device_release_direct_mode(indio_dev);
 
+out:
+	iio_device_release_direct_mode(indio_dev);
 	return ret;
 }
 
@@ -722,31 +725,14 @@ static const struct iio_buffer_setup_ops ads131e08_buffer_ops = {
 	.postdisable = ads131e08_buffer_postdisable
 };
 
-static irqreturn_t ads131e08_interrupt(int irq, void *private)
+static irqreturn_t ads131e08_trigger_handler(int irq, void *private)
 {
-	struct iio_dev *indio_dev = private;
+	struct iio_poll_func *pf = private;
+	struct iio_dev *indio_dev = pf->indio_dev;
 	struct ads131e08_state *st = iio_priv(indio_dev);
-
-	if (!st->rdatac_enabled) {
-		complete(&st->completion);
-		return IRQ_HANDLED;
-	}
-
-	return IRQ_WAKE_THREAD;
-}
-
-static irqreturn_t ads131e08_data_ready_thread(int irq, void *private)
-{
-	struct iio_dev *indio_dev = private;
-	struct ads131e08_state *st = iio_priv(indio_dev);
+	unsigned int chn, i = 0;
 	u8 *src, *dest;
-	u8 i = 0, chn, num_bytes;
-
-	bool tweek_offset;
-
-	if (!st->rdatac_enabled)
-		return IRQ_HANDLED;
-
+	int ret;
 	/*
 	 * The number of data bits per channel depends on the data rate.
 	 * For 32 and 64 ksps data rates, number of data bits per channel
@@ -754,16 +740,19 @@ static irqreturn_t ads131e08_data_ready_thread(int irq, void *private)
 	 * type (be:s24/32>>8). So we use a little tweak to pack properly
 	 * 16 bits of data into the buffer.
 	 */
-	num_bytes = ADS131E08_NUM_DATA_BYTES(st->data_rate);
-	tweek_offset = (num_bytes == 2);
+	unsigned int num_bytes = ADS131E08_NUM_DATA_BYTES(st->data_rate);
+	bool tweek_offset = (num_bytes == 2);
+
+	if (!st->rdatac_enabled)
+		goto out;
 
 	if (spi_sync(st->spi, &st->msg)) {
 		dev_warn(&st->spi->dev, "SPI read in thread failed\n");
-		return IRQ_HANDLED;
+		goto out;
 	}
 
 	if (ads131e08_check_status(st))
-		return IRQ_HANDLED;
+		memset(st->data, 0, sizeof(st->data));
 
 	iio_for_each_active_channel(indio_dev, chn)
 	{
@@ -797,6 +786,22 @@ static irqreturn_t ads131e08_data_ready_thread(int irq, void *private)
 
 	iio_push_to_buffers_with_timestamp(indio_dev, st->data,
 					   iio_get_time_ns(indio_dev));
+
+out:
+	iio_trigger_notify_done(indio_dev->trig);
+	return IRQ_HANDLED;
+}
+
+static irqreturn_t ads131e08_interrupt(int irq, void *private)
+{
+	struct iio_dev *indio_dev = private;
+	struct ads131e08_state *st = iio_priv(indio_dev);
+
+	if (st->rdatac_enabled)
+		iio_trigger_poll(st->trig);
+
+	else
+		complete(&st->completion);
 
 	return IRQ_HANDLED;
 }
@@ -910,8 +915,8 @@ static void ads131e08_regulator_disable(void *data)
 static int ads131e08_probe(struct spi_device *spi)
 {
 	const struct ads131e08_info *info;
-	struct iio_dev *indio_dev;
 	struct ads131e08_state *st;
+	struct iio_dev *indio_dev;
 	unsigned long adc_clk_hz;
 	unsigned long adc_clk_ns;
 	int ret;
@@ -932,41 +937,52 @@ static int ads131e08_probe(struct spi_device *spi)
 	st->info = info;
 	st->spi = spi;
 
-	st->rdatac_enabled = false;
-
-	indio_dev->modes = INDIO_DIRECT_MODE | INDIO_BUFFER_HARDWARE;
-	init_completion(&st->completion);
-	memset(st->rx_buf, 0, sizeof(st->rx_buf));
-	memset(&st->xfer, 0, sizeof(st->xfer));
-	st->xfer.rx_buf = st->rx_buf;
-	st->xfer.cs_change = 0;
-
 	ret = ads131e08_alloc_channels(indio_dev);
 	if (ret)
 		return ret;
 
 	indio_dev->name = st->info->name;
 	indio_dev->info = &ads131e08_iio_info;
+	indio_dev->modes = INDIO_DIRECT_MODE | INDIO_BUFFER_TRIGGERED;
 
-	ret = devm_iio_kfifo_buffer_setup(&spi->dev, indio_dev,
-					  &ads131e08_buffer_ops);
-	if (ret) {
-		dev_err(&spi->dev, "failed to setup kfifo buffer\n");
-		return ret;
-	}
+	init_completion(&st->completion);
 
 	if (spi->irq) {
-		ret = devm_request_threaded_irq(
-			&spi->dev, spi->irq, ads131e08_interrupt,
-			ads131e08_data_ready_thread,
-			IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
-			dev_name(&spi->dev), indio_dev);
+		ret = devm_request_irq(&spi->dev, spi->irq, ads131e08_interrupt,
+				       IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
+				       dev_name(&spi->dev), indio_dev);
 		if (ret)
 			return dev_err_probe(&spi->dev, ret,
 					     "request irq failed\n");
 	} else {
 		dev_err(&spi->dev, "data ready IRQ missing\n");
 		return -ENODEV;
+	}
+
+	st->trig = devm_iio_trigger_alloc(&spi->dev, "%s-dev%d",
+					  indio_dev->name,
+					  iio_device_id(indio_dev));
+	if (!st->trig) {
+		dev_err(&spi->dev, "failed to allocate IIO trigger\n");
+		return -ENOMEM;
+	}
+
+	st->trig->dev.parent = &spi->dev;
+	iio_trigger_set_drvdata(st->trig, indio_dev);
+	ret = devm_iio_trigger_register(&spi->dev, st->trig);
+	if (ret) {
+		dev_err(&spi->dev, "failed to register IIO trigger\n");
+		return -ENOMEM;
+	}
+
+	indio_dev->trig = iio_trigger_get(st->trig);
+
+	ret = devm_iio_triggered_buffer_setup(&spi->dev, indio_dev, NULL,
+					      &ads131e08_trigger_handler,
+					      &ads131e08_buffer_ops);
+	if (ret) {
+		dev_err(&spi->dev, "failed to setup IIO buffer\n");
+		return ret;
 	}
 
 	st->vref_reg = devm_regulator_get_optional(&spi->dev, "vref");
@@ -996,15 +1012,13 @@ static int ads131e08_probe(struct spi_device *spi)
 
 	adc_clk_hz = clk_get_rate(st->adc_clk);
 	if (!adc_clk_hz) {
-		dev_err(&spi->dev, "ADC clock speed not set\n");
+		dev_err(&spi->dev, "failed to get the ADC clock rate\n");
 		return -EINVAL;
 	}
 
 	adc_clk_ns = NSEC_PER_SEC / adc_clk_hz;
-
 	st->sdecode_delay_us = DIV_ROUND_UP(
 		ADS131E08_WAIT_SDECODE_CYCLES * adc_clk_ns, NSEC_PER_USEC);
-
 	st->reset_delay_us = DIV_ROUND_UP(
 		ADS131E08_WAIT_RESET_CYCLES * adc_clk_ns, NSEC_PER_USEC);
 
