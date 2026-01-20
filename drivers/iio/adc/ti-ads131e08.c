@@ -5,6 +5,18 @@
  * Copyright (c) 2020 AVL DiTEST GmbH
  *   Tomislav Denis <tomislav.denis@avl.com>
  *
+ * Copyright (c) 2026 Vrump Industrial IOT Solutions P.C.
+ *   Viktor Karamanis <viktor.karamanis@outlook.com>
+ *
+ * Contributions and optimizations:
+ * - Enabled RDATAC in buffer trigger mode instead of RDATA polling
+ * - Added proper delay timing between register writes
+ * - Added ads131e08_check_status() and ads131e08_stop_read_data_continuous() functions
+ * - Merged channel config functions into ads131e08_set_channel_config()
+ * - Added ads131e08_buffer_preenable() and ads131e08_buffer_postdisable() instead of
+ *   ads131e08_trigger_ops
+ * - Code cleanup, formatting, and minor lint fixes
+ *
  * Datasheet: https://www.ti.com/lit/ds/symlink/ads131e08.pdf
  */
 
@@ -302,7 +314,7 @@ static int ads131e08_check_status(struct ads131e08_state *st)
 
 	/* Header check (bits 23:20) should be 0b1100 */
 	if (((status >> 20) & 0xF) != 0xC) {
-		dev_err_ratelimited(&st->spi->dev,
+		dev_dbg_ratelimited(&st->spi->dev,
 				    "Status word header invalid: 0x%06x\n",
 				    status);
 		ret = -EIO;
@@ -313,12 +325,12 @@ static int ads131e08_check_status(struct ads131e08_state *st)
 
 	for (i = 0; i < st->info->max_channels; i++) {
 		if (p_fault & BIT(i))
-			dev_warn_ratelimited(
+			dev_dbg_ratelimited(
 				&st->spi->dev,
 				"Positive fault detected on channel %d\n", i);
 
 		if (n_fault & BIT(i))
-			dev_warn_ratelimited(
+			dev_dbg_ratelimited(
 				&st->spi->dev,
 				"Negative fault detected on channel %d\n", i);
 	}
@@ -661,13 +673,13 @@ static int ads131e08_debugfs_reg_access(struct iio_dev *indio_dev,
 
 	if (readval) {
 		u8 reg_value;
+
 		ret = ads131e08_read_reg(st, reg, &reg_value);
 		*readval = reg_value;
 		goto out;
 	}
 
 	ret = ads131e08_write_reg(st, reg, writeval);
-	iio_device_release_direct_mode(indio_dev);
 
 out:
 	iio_device_release_direct_mode(indio_dev);
@@ -940,7 +952,6 @@ static int ads131e08_probe(struct spi_device *spi)
 	st->info = info;
 	st->spi = spi;
 	st->rdatac_enabled = false;
-	memset(st->rx_buf, 0, sizeof(st->rx_buf));
 
 	ret = ads131e08_alloc_channels(indio_dev);
 	if (ret)
