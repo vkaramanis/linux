@@ -964,7 +964,6 @@ static int ads131e08_probe(struct spi_device *spi)
 	indio_dev->info = &ads131e08_iio_info;
 	indio_dev->modes = INDIO_DIRECT_MODE | INDIO_BUFFER_TRIGGERED;
 	indio_dev->scan_timestamp = true;
-	indio_dev->num_channels = st->info->num_channels;
 	indio_dev->scan_bytes =
 		indio_dev->num_channels * ADS131E08_NUM_STORAGE_BYTES +
 		sizeof(int64_t);
