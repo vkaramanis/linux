@@ -741,6 +741,10 @@ static const struct iio_buffer_setup_ops ads131e08_buffer_ops = {
 	.postdisable = ads131e08_buffer_postdisable
 };
 
+static const struct iio_trigger_ops ads131e08_trigger_ops = {
+	.validate_device = &iio_trigger_validate_own_device,
+};
+
 static irqreturn_t ads131e08_trigger_handler(int irq, void *private)
 {
 	struct iio_poll_func *pf = private;
@@ -799,8 +803,10 @@ static irqreturn_t ads131e08_trigger_handler(int irq, void *private)
 		i++;
 	}
 
-	iio_push_to_buffers_with_timestamp(indio_dev, st->data,
-					   iio_get_time_ns(indio_dev));
+	iio_push_to_buffers_with_ts(indio_dev, st->data,
+				    ADS131E08_NUM_STORAGE_BYTES *
+					    indio_dev->num_channels,
+				    iio_get_time_ns(indio_dev));
 
 out:
 	iio_trigger_notify_done(indio_dev->trig);
@@ -983,6 +989,7 @@ static int ads131e08_probe(struct spi_device *spi)
 		return -ENOMEM;
 	}
 
+	st->trig->ops = &ads131e08_trigger_ops;
 	st->trig->dev.parent = &spi->dev;
 	iio_trigger_set_drvdata(st->trig, indio_dev);
 	ret = devm_iio_trigger_register(&spi->dev, st->trig);
