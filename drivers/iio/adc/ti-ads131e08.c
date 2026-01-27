@@ -964,6 +964,7 @@ static int ads131e08_probe(struct spi_device *spi)
 	indio_dev->name = st->info->name;
 	indio_dev->info = &ads131e08_iio_info;
 	indio_dev->modes = INDIO_DIRECT_MODE | INDIO_BUFFER_TRIGGERED;
+	indio_dev->scan_timestamp = true;
 
 	init_completion(&st->completion);
 
