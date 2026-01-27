@@ -123,8 +123,8 @@ struct ads131e08_state {
 	 */
 	u8 rx_buf[ADS131E08_NUM_STATUS_BYTES + ADS131E08_NUM_DATA_BYTES_MAX +
 		  1] __aligned(IIO_DMA_MINALIGN);
-	u8 data[ADS131E08_NUM_OF_CHANNELS_MAX *
-		ADS131E08_NUM_STORAGE_BYTES] __aligned(IIO_DMA_MINALIGN);
+	u8 data[ADS131E08_NUM_OF_CHANNELS_MAX * ADS131E08_NUM_STORAGE_BYTES +
+		sizeof(int64_t)] __aligned(IIO_DMA_MINALIGN);
 };
 
 static const struct ads131e08_info ads131e08_info_tbl[] = {
@@ -803,8 +803,7 @@ static irqreturn_t ads131e08_trigger_handler(int irq, void *private)
 		i++;
 	}
 
-	iio_push_to_buffers_with_timestamp(indio_dev, st->data,
-					   iio_get_time_ns(indio_dev));
+	iio_push_to_buffers_with_timestamp(indio_dev, st->data, pf->timestamp);
 
 out:
 	iio_trigger_notify_done(indio_dev->trig);
@@ -965,6 +964,10 @@ static int ads131e08_probe(struct spi_device *spi)
 	indio_dev->info = &ads131e08_iio_info;
 	indio_dev->modes = INDIO_DIRECT_MODE | INDIO_BUFFER_TRIGGERED;
 	indio_dev->scan_timestamp = true;
+	indio_dev->num_channels = st->info->num_channels;
+	indio_dev->scan_bytes =
+		indio_dev->num_channels * ADS131E08_NUM_STORAGE_BYTES +
+		sizeof(int64_t);
 
 	init_completion(&st->completion);
 
@@ -999,7 +1002,8 @@ static int ads131e08_probe(struct spi_device *spi)
 
 	indio_dev->trig = iio_trigger_get(st->trig);
 
-	ret = devm_iio_triggered_buffer_setup(&spi->dev, indio_dev, NULL,
+	ret = devm_iio_triggered_buffer_setup(&spi->dev, indio_dev,
+					      &iio_pollfunc_store_time,
 					      &ads131e08_trigger_handler,
 					      &ads131e08_buffer_ops);
 	if (ret) {
