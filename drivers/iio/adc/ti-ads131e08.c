@@ -492,14 +492,11 @@ static int ads131e08_initial_config(struct iio_dev *indio_dev)
 		return ret;
 
 	for (i = 0; i < indio_dev->num_channels; i++) {
-		if (indio_dev->channels[i].type != IIO_TIMESTAMP) {
-			ret = ads131e08_set_channel_config(
-				st, channel->channel,
-				st->channel_config[i].pga_gain,
-				st->channel_config[i].mux, false);
-			if (ret)
-				return ret;
-		}
+		ret = ads131e08_set_channel_config(
+			st, channel->channel, st->channel_config[i].pga_gain,
+			st->channel_config[i].mux, false);
+		if (ret)
+			return ret;
 
 		active_channels |= BIT(channel->channel);
 		channel++;
@@ -507,13 +504,11 @@ static int ads131e08_initial_config(struct iio_dev *indio_dev)
 
 	/* Power down unused channels */
 	for_each_clear_bit(i, &active_channels, st->info->max_channels) {
-		if (indio_dev->channels[i].type != IIO_TIMESTAMP) {
-			ret = ads131e08_set_channel_config(
-				st, i, ADS131E08_DEFAULT_PGA_GAIN,
-				ADS131E08_DEFAULT_MUX, true);
-			if (ret)
-				return ret;
-		}
+		ret = ads131e08_set_channel_config(st, i,
+						   ADS131E08_DEFAULT_PGA_GAIN,
+						   ADS131E08_DEFAULT_MUX, true);
+		if (ret)
+			return ret;
 	}
 
 	/* Request channel offset calibration */
@@ -780,9 +775,6 @@ static irqreturn_t ads131e08_trigger_handler(int irq, void *private)
 
 	iio_for_each_active_channel(indio_dev, chn)
 	{
-		if (indio_dev->channels[chn].type == IIO_TIMESTAMP)
-			continue;
-
 		src = st->rx_buf + ADS131E08_NUM_STATUS_BYTES + chn * num_bytes;
 		dest = st->data + i * ADS131E08_NUM_STORAGE_BYTES;
 
@@ -869,8 +861,8 @@ static int ads131e08_alloc_channels(struct iio_dev *indio_dev)
 		return -EINVAL;
 	}
 
-	channels = devm_kcalloc(&st->spi->dev, num_channels + 1,
-				sizeof(*channels), GFP_KERNEL);
+	channels = devm_kcalloc(&st->spi->dev, num_channels, sizeof(*channels),
+				GFP_KERNEL);
 	if (!channels)
 		return -ENOMEM;
 
@@ -924,17 +916,8 @@ static int ads131e08_alloc_channels(struct iio_dev *indio_dev)
 		i++;
 	}
 
-	channels[i].type = IIO_TIMESTAMP;
-	channels[i].indexed = 1;
-	channels[i].channel = -1;
-	channels[i].scan_index = i;
-	channels[i].scan_type.sign = 's';
-	channels[i].scan_type.realbits = 64;
-	channels[i].scan_type.storagebits = 64;
-	channels[i].scan_type.endianness = IIO_LE;
-
 	indio_dev->channels = channels;
-	indio_dev->num_channels = num_channels + 1;
+	indio_dev->num_channels = num_channels;
 	st->channel_config = channel_config;
 
 	return 0;
