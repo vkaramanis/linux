@@ -492,11 +492,14 @@ static int ads131e08_initial_config(struct iio_dev *indio_dev)
 		return ret;
 
 	for (i = 0; i < indio_dev->num_channels; i++) {
-		ret = ads131e08_set_channel_config(
-			st, channel->channel, st->channel_config[i].pga_gain,
-			st->channel_config[i].mux, false);
-		if (ret)
-			return ret;
+		if (indio_dev->channels[i].type != IIO_TIMESTAMP) {
+			ret = ads131e08_set_channel_config(
+				st, channel->channel,
+				st->channel_config[i].pga_gain,
+				st->channel_config[i].mux, false);
+			if (ret)
+				return ret;
+		}
 
 		active_channels |= BIT(channel->channel);
 		channel++;
@@ -504,11 +507,13 @@ static int ads131e08_initial_config(struct iio_dev *indio_dev)
 
 	/* Power down unused channels */
 	for_each_clear_bit(i, &active_channels, st->info->max_channels) {
-		ret = ads131e08_set_channel_config(st, i,
-						   ADS131E08_DEFAULT_PGA_GAIN,
-						   ADS131E08_DEFAULT_MUX, true);
-		if (ret)
-			return ret;
+		if (indio_dev->channels[i].type != IIO_TIMESTAMP) {
+			ret = ads131e08_set_channel_config(
+				st, i, ADS131E08_DEFAULT_PGA_GAIN,
+				ADS131E08_DEFAULT_MUX, true);
+			if (ret)
+				return ret;
+		}
 	}
 
 	/* Request channel offset calibration */
