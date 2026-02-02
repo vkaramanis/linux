@@ -775,6 +775,9 @@ static irqreturn_t ads131e08_trigger_handler(int irq, void *private)
 
 	iio_for_each_active_channel(indio_dev, chn)
 	{
+		if (indio_dev->channels[chn].type == IIO_TIMESTAMP)
+			continue;
+
 		src = st->rx_buf + ADS131E08_NUM_STATUS_BYTES + chn * num_bytes;
 		dest = st->data + i * ADS131E08_NUM_STORAGE_BYTES;
 
@@ -861,8 +864,8 @@ static int ads131e08_alloc_channels(struct iio_dev *indio_dev)
 		return -EINVAL;
 	}
 
-	channels = devm_kcalloc(&st->spi->dev, num_channels, sizeof(*channels),
-				GFP_KERNEL);
+	channels = devm_kcalloc(&st->spi->dev, num_channels + 1,
+				sizeof(*channels), GFP_KERNEL);
 	if (!channels)
 		return -ENOMEM;
 
@@ -907,7 +910,7 @@ static int ads131e08_alloc_channels(struct iio_dev *indio_dev)
 						 BIT(IIO_CHAN_INFO_SCALE);
 		channels[i].info_mask_shared_by_type =
 			BIT(IIO_CHAN_INFO_SAMP_FREQ);
-		channels[i].scan_index = channel;
+		channels[i].scan_index = i;
 		channels[i].scan_type.sign = 's';
 		channels[i].scan_type.realbits = 24;
 		channels[i].scan_type.storagebits = 32;
@@ -916,8 +919,17 @@ static int ads131e08_alloc_channels(struct iio_dev *indio_dev)
 		i++;
 	}
 
+	channels[i].type = IIO_TIMESTAMP;
+	channels[i].indexed = 1;
+	channels[i].channel = -1;
+	channels[i].scan_index = i;
+	channels[i].scan_type.sign = 's';
+	channels[i].scan_type.realbits = 64;
+	channels[i].scan_type.storagebits = 64;
+	channels[i].scan_type.endianness = IIO_LE;
+
 	indio_dev->channels = channels;
-	indio_dev->num_channels = num_channels;
+	indio_dev->num_channels = num_channels + 1;
 	st->channel_config = channel_config;
 
 	return 0;
@@ -963,11 +975,6 @@ static int ads131e08_probe(struct spi_device *spi)
 	indio_dev->name = st->info->name;
 	indio_dev->info = &ads131e08_iio_info;
 	indio_dev->modes = INDIO_DIRECT_MODE | INDIO_BUFFER_TRIGGERED;
-	indio_dev->scan_timestamp = true;
-	indio_dev->scan_bytes =
-		indio_dev->num_channels * ADS131E08_NUM_STORAGE_BYTES +
-		sizeof(int64_t);
-
 	init_completion(&st->completion);
 
 	if (spi->irq) {
